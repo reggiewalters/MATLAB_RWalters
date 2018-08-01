@@ -29,9 +29,6 @@
 % the beginning of WY 2018 through the most current available entry
 
 function [Data, date] = get_CDEC(station_ID, dur_code, sensor_Num, StartDate, EndDate)
-% grabs cdec data and fills missing data with NaN values
-% r. walters, hetch hetchy water and power, july 2018
-% all inputs in single quotes. use 'now' for EndDate to run thru current
 
 EndDate = lower(EndDate);
 if ( strncmpi('now', EndDate, 3) ) == 1
