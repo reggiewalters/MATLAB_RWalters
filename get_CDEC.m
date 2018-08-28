@@ -1,8 +1,10 @@
 % This function will retrieve data from the California Data Exchange Center
 % (CDEC) into Matlab arrays. Requires that user knows sensor numbers and
 % associated duration codes.
-% R. Walters, Hetch Hetchy Water & Power, June 2018
-% Updated Aug 2018 with additional error traps for sensor number alignment
+% R. Walters, HHWP, June 2018
+% with snippets borrowed from R. Picklum
+% Updated Jul 2018 with additional error traps for sensor number alignment
+% Updated Aug 27 2018 to account for CDEC url changes (dynamicapp)
 %
 %%% USAGE:
 %   >> get_CDEC(station_ID, dur_code, sensor_Num, StartDate, EndDate)
@@ -29,68 +31,44 @@
 % the beginning of WY 2018 through the most current available entry
 
 function [Data, date] = get_CDEC(station_ID, dur_code, sensor_Num, StartDate, EndDate)
+% grabs cdec data and fills missing data with NaN values
+% r. walters, hetch hetchy water and power, july 2018
+% all inputs in single quotes. use 'now' for EndDate to run thru current
 
-EndDate = lower(EndDate);
+
 if ( strncmpi('now', EndDate, 3) ) == 1
-    furl = ['http://cdec.water.ca.gov/cgi-progs/queryCSV?station_id=', ...
-        station_ID,'&sensor_num=',sensor_Num,'&dur_code=',dur_code, ...
-        '&start_date=',datestr(StartDate,'mm/dd/yyyy'), ...
+    furl = ['http://cdec.water.ca.gov/dynamicapp/req/CSVDataServlet?Stations=', ...
+        station_ID,'&SensorNums=',sensor_Num,'&dur_code=',dur_code, ...
+        '&Start=',datestr(StartDate,'yyyy-mm-dd'), ...
         '&end_date=Now'];
 else
     furl = ['http://cdec.water.ca.gov/cgi-progs/queryCSV?station_id=', ...
         station_ID,'&dur_code=',dur_code,'&sensor_num=',sensor_Num, ...
         '&start_date=',datestr(StartDate,'mm/dd/yyyy'), ...
-        '&end_date=',datestr(EndDate,'mm/dd/yyyy')];
+        '&end_date=',datestr(EndDate,'yyyy-mm-dd')];
 end
-fname = 'temp.csv';
-try
-    websave(fname,furl);  
-catch
-    catch_str = ['**cannot find cdec vars with specified parameters** \n', ...
+
+catch_str = ['**cannot find cdec vars with specified parameters** \n', ...
         '**please check syntax or try again later** \n'];
-    fprintf(catch_str);
-    return
-end
-
-fid = fopen(fname);
-fSpec = '%s %s %f';
-C = textscan(fid,fSpec,'HeaderLines',2);
-fclose(fid);    delete(fname);
-C = C{1};
-
-l1 = strsplit(C{1},',');    l2 = strsplit(C{end},',');
 try
-    st = datenum([l1{1} l1{2}],'yyyymmddHHMM');
-    en = datenum([l2{1} l2{2}],'yyyymmddHHMM');
+    s = urlread(furl);
 catch
-    fail_str = ['**no timing information found - check to be sure ',upper(station_ID),' includes the specified sensor number** \n'];
-    fprintf(fail_str);
+    fprintf(catch_str)
     return
 end
 
-% expected dates entries (to scan for missing data)
-if dur_code == 'e'
-    refVec = st:(1/24/4):en;            % event (15-minute)
-elseif dur_code == 'h'
-    refVec = st:(1/24):en;              % hourly
-elseif dur_code == 'd'
-    refVec = st:(24/24):en;             % daily
+if length(s) < 100
+    fprintf(catch_str)
+    return
 end
 
-for i = 1:length(C)
-    li = strsplit(C{i},',');
-    date(i) = datenum([li{1} li{2}],'yyyymmddHHMM');
-    Data(i) = str2double(li{3});
+express = ['\w{3},' upper(dur_code) ',[^,]*,[^,]*,([^,]*),[^,]*,([^,]*)'];
+tok = regexp(s, express, 'tokens');
+
+date = zeros(1, numel(tok));    Data = date;
+
+for i = 1:length(tok)
+    date(i) = datenum(tok{i}{1});
+    Data(i) = str2double(tok{i}{2});
 end
 
-refInds = ismembertol(refVec,date,1e-10);
-newDateVec = nan(numel(refVec),1);  newDataVec = newDateVec;
-newDateVec(refInds) = date;
-
-newDataVec(refInds) = Data;
-
-Data = newDataVec;
-date = newDateVec;
-
-nanx = isnan(date); t = 1:numel(date);
-date(nanx) = interp1(t(~nanx), date(~nanx), t(nanx));
