@@ -47,7 +47,7 @@ if numel(a) > 250
     hLines = numel(strfind(a, '#')) + 2;    % number of headers
     s = textscan(a, '%s %s %s %s %s %f %s %f %s', 'headerLines', hLines);
     
-% Reservoir Case
+% Reservoir Case:
 else
     cb1 = '00054';    % storage [acre-ft]
     cb2 = '62614';    % elevation [ft]
