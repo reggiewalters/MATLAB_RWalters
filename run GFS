@@ -1,0 +1,7 @@
+load tsta.mat
+[Tmax,~,~,time]=get_GFS_025(tsta.Lat, tsta.Lon, 7); % get daily maximum air temp for all stations in tsta.mat
+plot(time,Tmax,'lineWidth',2);
+datetick('x','ddd'); grid on;
+set(gca,'fontSize',16);
+ylabel('T_a [\circF]');
+legend(tsta.names);
