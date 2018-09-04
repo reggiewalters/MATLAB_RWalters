@@ -8,14 +8,16 @@
 % forecasted 0.25 grid cell point for which it is the nearest neighbor.
 % R. Walters, HHWP, Sept 2018
 % Updated September 4, 2018 to include variable argument input
-% 
+% \\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\
+% *NOTE: User time zone is hard-wired and must be edited when using outside
+%  of Pacific Time Zone (line 51)
+% \\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\
 %%% USAGE:
 % >> get_GFS_025(Lat, Lon, T_offset, varargin)
 %
 %%% INPUTS:
 %   'Lat':      scalar or nx1 array of decimal latitude values
 %   'Lon':      scalar or nx1 array of decimal longitude values
-%   'T_offset': absolute offset from UTC/Greenwich time in hours
 %
 %%% OUTPUTS:
 % **First 4 Outputs are Computed Daily Variables:
@@ -43,7 +45,11 @@
 % accumulated precip for the GFS 1/4-deg grid cell containing the Cherry 
 % Valley Met (CVM) weather station 
 %
-function [Tmax,Tmin,Ptot,DT, T_air, Precip, time] = get_GFS_025(T_Lat, T_Lon, T_offset, varargin)
+function [Tmax,Tmin,Ptot,DT, T_air, Precip, time] = get_GFS_025(T_Lat, T_Lon, varargin)
+
+% set time offset, dependent upon timezone/DST
+timeZone = 'America/Los_Angeles';
+T = datetime('today','TimeZone',timeZone);
 
 if iscolumn(T_Lat)
     input_LatT = T_Lat;
@@ -53,7 +59,7 @@ elseif ~iscolumn(T_Lat)
     input_LonT = T_Lon';
 end
 
-if nargin>3
+if nargin>2
     input_LatP = varargin{1};
     input_LonP = varargin{2};
 else
@@ -61,10 +67,14 @@ else
     input_LonP = T_Lon;
 end
 
-T_offset = T_offset/24;                 
-if T_offset<0
-    T_offset = T_offset*-1;
+[dT, dST] = tzoffset(T);    dT = hours(dT); dST = hours(dST);
+if isdst(T)
+    T_offset = dT;
+elseif ~isdst(T)
+    T_offset = dT - dST;
 end
+
+T_offset = T_offset/24*-1;
 
 date = datestr(now,'yyyymmdd');
 
