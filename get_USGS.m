@@ -4,7 +4,6 @@
 % version, the function only retrieves elevation and discharge/storage
 % data.
 % R. Walters, HHWP, Aug 2018
-% with snippet(s) from R. Picklum
 %
 %%% USAGE:
 %   >> get_USGS(siteNum, StartDate, EndDate)
