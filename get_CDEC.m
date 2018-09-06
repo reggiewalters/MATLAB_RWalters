@@ -42,9 +42,9 @@ if ( strncmpi('now', EndDate, 3) ) == 1
         '&Start=',datestr(StartDate,'yyyy-mm-dd'), ...
         '&end_date=Now'];
 else
-    furl = ['http://cdec.water.ca.gov/cgi-progs/queryCSV?station_id=', ...
-        station_ID,'&dur_code=',dur_code,'&sensor_num=',sensor_Num, ...
-        '&start_date=',datestr(StartDate,'mm/dd/yyyy'), ...
+    furl = ['http://cdec.water.ca.gov/dynamicapp/req/CSVDataServlet?Stations=', ...
+        station_ID,'&SensorNums=',sensor_Num,'&dur_code=',dur_code, ...
+        '&Start=',datestr(StartDate,'yyyy-mm-dd'), ...
         '&end_date=',datestr(EndDate,'yyyy-mm-dd')];
 end
 
@@ -62,13 +62,19 @@ if length(s) < 100
     return
 end
 
-express = ['\w{3},' upper(dur_code) ',[^,]*,[^,]*,([^,]*),[^,]*,([^,]*)'];
-tok = regexp(s, express, 'tokens');
+A = textscan(s,'%s %s %d %s %s %s %f %s %s','headerlines',1,'Delimiter',',');
+nT = length(A{1});
 
-date = zeros(1, numel(tok));    Data = date;
+date = zeros(1, nT);            
+ymd = A{5};                     hhmm = A{6};
 
-for i = 1:length(tok)
-    date(i) = datenum(tok{i}{1});
-    Data(i) = str2double(tok{i}{2});
+for i = 1:nT
+    cdstr = ymd{i};     
+    ctstr = hhmm{i};
+    dv    = datevec(cdstr,' yyyymmdd');
+    dv2   = datevec(ctstr, 'HHMM');
+    DV    = [dv(1:3) dv2(4:end)];
+    date(i) = datenum(DV);
 end
 
+Data = A{7};
