@@ -2,7 +2,6 @@
 % (CDEC) into Matlab arrays. Requires that user knows sensor numbers and
 % associated duration codes.
 % R. Walters, HHWP, June 2018
-% with snippets borrowed from R. Picklum
 % Updated Jul 2018 with additional error traps for sensor number alignment
 % Updated Aug 27 2018 to account for CDEC url changes (dynamicapp)
 %
