@@ -5,6 +5,8 @@
 % Updated Jul 2018 with additional error traps for sensor number alignment
 % Updated Aug 27 2018 to account for CDEC url changes (dynamicapp)
 % Updated Sept 5 2018 to account for CDEC date changes
+% Updated Sept 6 2018 to account for additional CDEC changes
+% also got rid of all for-loops!
 %
 %%% USAGE:
 %   >> get_CDEC(station_ID, dur_code, sensor_Num, StartDate, EndDate)
