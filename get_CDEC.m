@@ -2,9 +2,9 @@
 % (CDEC) into Matlab arrays. Requires that user knows sensor numbers and
 % associated duration codes.
 % R. Walters, HHWP, June 2018
-% with snippets borrowed from R. Picklum
 % Updated Jul 2018 with additional error traps for sensor number alignment
 % Updated Aug 27 2018 to account for CDEC url changes (dynamicapp)
+% Updated Sept 5 2018 to account for CDEC date changes
 %
 %%% USAGE:
 %   >> get_CDEC(station_ID, dur_code, sensor_Num, StartDate, EndDate)
@@ -62,13 +62,10 @@ if length(s) < 100
     return
 end
 
-express = ['\w{3},' upper(dur_code) ',[^,]*,[^,]*,([^,]*),[^,]*,([^,]*)'];
-tok = regexp(s, express, 'tokens');
+A = textscan(s,'%s %s %d %s %s %s %s %s %s','headerlines',1,'Delimiter',',');
+nT = length(A{1});
 
-date = zeros(1, numel(tok));    Data = date;
+dCell = ([A{5} A{6}]);          dMat = cell2mat(dCell);
+date  = datenum(dMat,'yyyymmddHHMM');            
 
-for i = 1:length(tok)
-    date(i) = datenum(tok{i}{1});
-    Data(i) = str2double(tok{i}{2});
-end
-
+Data = str2double(A{7});
