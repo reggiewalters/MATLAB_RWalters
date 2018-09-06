@@ -4,6 +4,7 @@
 % R. Walters, HHWP, June 2018
 % Updated Jul 2018 with additional error traps for sensor number alignment
 % Updated Aug 27 2018 to account for CDEC url changes (dynamicapp)
+% Updated Sept 5 2018 to account for CDEC date changes
 %
 %%% USAGE:
 %   >> get_CDEC(station_ID, dur_code, sensor_Num, StartDate, EndDate)
@@ -61,7 +62,7 @@ if length(s) < 100
     return
 end
 
-A = textscan(s,'%s %s %d %s %s %s %f %s %s','headerlines',1,'Delimiter',',');
+A = textscan(s,'%s %s %d %s %s %s %s %s %s','headerlines',1,'Delimiter',',');
 nT = length(A{1});
 
 date = zeros(1, nT);            
@@ -76,4 +77,4 @@ for i = 1:nT
     date(i) = datenum(DV);
 end
 
-Data = A{7};
+Data = str2double(A{7});
