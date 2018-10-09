@@ -6,7 +6,9 @@
 % Updated Aug 27 2018 to account for CDEC url changes (dynamicapp)
 % Updated Sept 5 2018 to account for CDEC date changes
 % Updated Sept 6 2018 to account for additional CDEC changes
-% also got rid of all for-loops!
+% Updated Sept 26 2018 to accommodate additional CDEC changes
+% Updated Oct 9 2018 to accommodate additional CDEC changes
+%
 %
 %%% USAGE:
 %   >> get_CDEC(station_ID, dur_code, sensor_Num, StartDate, EndDate)
@@ -37,12 +39,18 @@ function [Data, date] = get_CDEC(station_ID, dur_code, sensor_Num, StartDate, En
 % r. walters, hetch hetchy water and power, july 2018
 % all inputs in single quotes. use 'now' for EndDate to run thru current
 
+floorNow = floor(now);
+if isnumeric(EndDate)
+    if floor(EndDate) == floorNow
+        EndDate = 'now';
+    end
+end
 
-if ( strncmpi('now', EndDate, 3) ) == 1
+if  ( strncmpi('now', EndDate, 3) ) == 1
     furl = ['http://cdec.water.ca.gov/dynamicapp/req/CSVDataServlet?Stations=', ...
         station_ID,'&SensorNums=',sensor_Num,'&dur_code=',dur_code, ...
         '&Start=',datestr(StartDate,'yyyy-mm-dd'), ...
-        '&end_date=Now'];
+        '&end_date=Now'];   
 else
     furl = ['http://cdec.water.ca.gov/dynamicapp/req/CSVDataServlet?Stations=', ...
         station_ID,'&SensorNums=',sensor_Num,'&dur_code=',dur_code, ...
@@ -53,7 +61,7 @@ end
 catch_str = ['**cannot find cdec vars with specified parameters** \n', ...
         '**please check syntax or try again later** \n'];
 try
-    s = urlread(furl);
+    s = webread(furl);
 catch
     fprintf(catch_str)
     return
@@ -67,7 +75,9 @@ end
 A = textscan(s,'%s %s %d %s %s %s %s %s %s','headerlines',1,'Delimiter',',');
 nT = length(A{1});
 
-dCell = ([A{5} A{6}]);          dMat = cell2mat(dCell);
+dCell = ([A{5}]);          dMat = cell2mat(dCell);
 date  = datenum(dMat,'yyyymmddHHMM');            
 
 Data = str2double(A{7});
+
+Data(Data<-100) = NaN;
