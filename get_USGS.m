@@ -4,6 +4,8 @@
 % version, the function only retrieves elevation and discharge/storage
 % data.
 % R. Walters, HHWP, Aug 2018
+% with snippet(s) from R. Picklum
+% Updated 10/16/2018 to fix time array issue
 %
 %%% USAGE:
 %   >> get_USGS(siteNum, StartDate, EndDate)
@@ -60,9 +62,13 @@ end
 
 % timing vector array
 allDates = s{3};    allTimes = s{4};
-st_d = datenum([allDates{1} ' ' allTimes{1}]);
-en_d = datenum([allDates{end} ' ' allTimes{end}]);
-dates    = linspace(st_d, en_d, numel(allDates));
+DM = [allDates allTimes];
+dates = zeros(1,size(DM,1));
+for i = 1:size(DM,1)
+    d = strjoin(DM(i,:));
+    dates(i) = datenum(d);
+end
+dates = dates';
 
 % store output arrays
 QV =    s{6};
