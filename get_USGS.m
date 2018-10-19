@@ -39,9 +39,9 @@ endStr   = datestr(EndDate, dFormat);
 % River Case:
 cb1 = '00060';    % discharge [cfs]
 cb2 = '00065';    % stage [ft]
-furl = ['https://nwis.waterdata.usgs.gov/ca/nwis/uv/?cb_' cb1 '=on&&cb_' ...
-    cb2 '=on&format=rdb&period&begin_date=' startStr '&end_date=' endStr ...
-    '&site_no=' siteNum];
+furl = ['https://waterdata.usgs.gov/ca/nwis/uv?cb_' cb1 '=on&amp&cb_' ...
+     cb2 '=on&format=rdb&period&begin_date=' startStr '&end_date=' endStr ...
+     '&site_no=' siteNum];
 a = urlread(furl);
 if numel(a) > 250
     
@@ -52,9 +52,10 @@ if numel(a) > 250
 else
     cb1 = '00054';    % storage [acre-ft]
     cb2 = '62614';    % elevation [ft]
-    furl = ['https://nwis.waterdata.usgs.gov/ca/nwis/uv/?cb_' cb1 '=on&&cb_' ...
-    cb2 '=on&format=rdb&period&begin_date=' startStr '&end_date=' endStr ...
-    '&site_no=' siteNum];
+    
+    furl = ['https://waterdata.usgs.gov/ca/nwis/uv?cb_' cb1 '=on&amp&cb_' ...
+        cb2 '=on&format=rdb&period&begin_date=' startStr '&end_date=' endStr ...
+        '&site_no=' siteNum];
     a = urlread(furl);
     hLines = numel(strfind(a, '#')) + 2;    % number of headers
     s = textscan(a, '%s %d %s %s %s %f %s %f %s', 'headerLines', hLines);
