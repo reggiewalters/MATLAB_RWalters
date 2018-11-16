@@ -1,0 +1,2087 @@
+function varargout = PRMS_CherryFIO_v1(varargin)
+%
+% Cherry Reservoir Forecast Informed Reservoir Operations Model
+% Water & Power Planning
+% Hetch Hetchy Water & Power
+% November 2018
+%
+% This model is designed to extract weather forecast information from NWS
+% Western Region Headquarters along with GFS model runs in a region in
+% California encompassing the headwaters of the Tuolumne River, Eleanor
+% Creek, and Cherry Creek. Specifically, the model forecasts runoff into
+% Cherry Reservoir, part of the Hetch Hetchy Regional Water System, under
+% large storm scenarios. These storms include 200-year, 500-year and
+% "design" storm precipitation events at Cherry Valley Met Station and
+% distributed according to historical regressions and internal model
+% hypsometry routines. The storms are synthetically appended to days 8, 9 
+% and 10 of the forecast. An operational model with user-defined constraints
+% to powerhouse and valve releases calculates spill rates and predicts an
+% operational strategy that keeps forecasted spill below a set of
+% hard-wired constraints: 0, 10 kcfs and 42kcfs respective to
+% aforementioned storm event sizes. 
+%
+% coded by: R. Walters, C. Graham and R. Picklum, Water & Power Planning,
+% HHWP, during September-October 2018.
+%
+% PRMS_CherryFIO_v1 MATLAB code for PRMS_CherryFIO_v1.fig
+%
+% dependencies: HHWP \New_Folder_Structure\Tools\MATLAB directory in path
+
+% Last Modified by R Walters 15-Nov-2018 
+
+% % % % % % % % % % % % % % % % % % % % % % % % % % % % % % % % % % % % % %
+
+% Begin initialization code - DO NOT EDIT
+gui_Singleton = 1;
+gui_State = struct('gui_Name',       mfilename, ...
+    'gui_Singleton',  gui_Singleton, ...
+    'gui_OpeningFcn', @PRMS_CherryFIO_v1_OpeningFcn, ...
+    'gui_OutputFcn',  @PRMS_CherryFIO_v1_OutputFcn, ...
+    'gui_LayoutFcn',  [] , ...
+    'gui_Callback',   []);
+if nargin && ischar(varargin{1})
+    gui_State.gui_Callback = str2func(varargin{1});
+end
+
+if nargout
+    [varargout{1:nargout}] = gui_mainfcn(gui_State, varargin{:});
+else
+    gui_mainfcn(gui_State, varargin{:});
+end
+
+
+% % Executes just before PRMS_CherryFIO_v1 is made visible. Initializes variable
+% and settings
+function PRMS_CherryFIO_v1_OpeningFcn(hObject, eventdata, handles, varargin)
+disp( '---------- gathering initial condition information - please wait -------------');
+% This function has no output args, see OutputFcn.
+% hObject    handle to figure
+% eventdata  reserved - to be defined in a future version of MATLAB
+% handles    structure with handles and user data (see GUIDATA)
+% varargin   command line arguments to PRMS_CherryFIO_v1 (see VARARGIN)
+
+% Choose default command line output for PRMS_CherryFIO_v1
+addpath('W:\Water\New_Folder_Structure\Tools\MATLAB');
+handles.output = hObject;
+set(handles.inflowPlot,'visible','off');
+
+% Update handles structure
+guidata(hObject, handles);
+%addpath('W:\Water\New_Folder_Structure\tools\Matlab');
+delete(findobj(allchild(0), '-regexp', 'Tag', '^Msgbox_')) %Delete any existing message boxes
+
+global MP
+MP = get(0, 'MonitorPositions');
+
+% % Initialize global variables controlling what types of runs and where to
+% get data
+global RunESPGlobal UseForm11
+UseForm11 = 0;
+RunESPGlobal = 0;
+
+global SpecialCtrlFile SpecialCtrl
+SpecialCtrl = 0;
+
+% % Initialize global variables controlling whether to make plots
+global MakeWeatherPlots MakeOutputPlots
+MakeWeatherPlots = 0;
+MakeOutputPlots = 0;
+
+% % Initialize global variable deisgnating what output to print out
+global  OutputVariablesGlobal
+if OutputVariablesGlobal
+else
+    OutputVariablesGlobal = 1;
+end
+
+%   Initialize ASO global variables
+global AdjustSnow ASOSWE ASODates ASOUseDates
+AdjustSnow = 0;
+ASOSWE = [];
+ASODates = [];
+ASOUseDates = [];
+
+global saveEndVars
+saveEndVars = 0;
+
+%   Storm sizes to compute = [100 200 500 1000 design]
+global StormList StormName StormSel
+StormList = [0 1 1 0 1];    %   
+StormName = {'100yr'; '200yr'; '500yr'; '1000yr'; 'Design'};
+StormSel = 1:length(StormList); 
+StormSel = StormSel(StormList==1);
+
+% get initial values for HPH flow, valve releases, and Storage
+global Valves_Curr HPH_mean Stor_Curr Valve_Max chelPumps
+
+siteNums = {'11277200' '11277300'};         % cherry lk & cherry cr blw res, respectively
+[z_ch,~,t1] = get_USGS(siteNums{1}, now-1, now);
+ti = t1 == floor(now);
+Stor_Curr = CherryStorage(z_ch(ti));        % storage at 00:00
+Stor_Curr = round(Stor_Curr/1e2)/10;
+
+% get current valve release
+[~, Q_Ch, t2] = get_USGS(siteNums{2}, now-1, now);
+ti = find(t2 == floor(now));
+Valves_Curr = nanmean(Q_Ch(ti-(12*4):ti));  % last 12 hours
+
+% Wiski Data % % %
+ts_id = '7577042';          % HPH_Pwr_Draft_60.E
+[HPH_wiski, wTime] = get_Wiski_ts(ts_id,now-1, now);    
+ti = find(wTime == floor(now));
+% get average of midnight-to-midnight previous day's power draft
+HPH_mean = round(nanmean(HPH_wiski(1:ti)));
+
+ts_id2 = '17856042';        % CHEL pumping F11.O ts
+% get most recent Form11 pumping rate estimate rom Wiski database
+pumps = get_Wiski_ts(ts_id2, now-3, now);
+if any(pumps)
+    chelPumps = abs(pumps(end));
+else
+    chelPumps = 0;
+end
+
+% % Initialize global variables designating default locations of controls
+global batFN PRMSFN HetchyparamsFN CHELparamsFN controlFN ...
+    OutputFolder InputFolder InputFNGlobal ASOFN VarsFN prjFolder parentDir ...
+    UseInflows HPH_Max FIOExcelFile FIOParentDir FIODailyDir
+
+parentDir = 'W:\\Water\New_Folder_Structure\Models\PRMS\Model\prms4.0.3_win\';
+
+prjFolder = [parentDir 'projects\Cherry'];
+batFN = [parentDir 'projects\Cherry\CherryRun.bat'];
+PRMSFN = [parentDir 'bin\prms.exe'];
+CHELparamsFN = [parentDir 'projects\Cherry\input\CherryEleanor.params'];
+controlFN = [parentDir 'projects\Cherry\input\Calibrated.control'];
+OutputFolder = [parentDir 'projects\Cherry\output'];
+InputFolder = [parentDir 'projects\Cherry\input'];
+InputFNGlobal = [parentDir 'projects\Cherry\input\Current_PRMS_Input_FIO.Data'];
+VarsFN = [parentDir 'projects\Cherry\state\initVars.data'];
+ASOFN = 'W:\Water\New_Folder_Structure\Models\PRMS\Calibration Data\All PRMS Calibration Data Current.xlsx';
+FIOParentDir = 'W:\Water\New_Folder_Structure\Analyses\Reservoir_filling';
+
+% initialize daily directory
+% generate a new directory structure for the
+% current day's simulation inputs/outputs
+[y m d] = datevec(now);
+if m >= 10
+    CWY = y+1;
+else
+    CWY = y;
+end
+% name and create the new directory for today's model run
+FIODailyDir = [FIOParentDir '\WY' num2str(CWY) '\Cherry\' num2str(y) ...
+    dPad(num2str(m),2) dPad(num2str(d),2)];
+if ~exist(FIODailyDir, 'dir')
+    mkdir(FIODailyDir);
+end
+
+FIOExcelFile = [FIODailyDir '\FIOReport.xlsx'];
+
+% % Initialize Input Options for default, OUTSIDE Moccasin run WITH
+% forecast WITH historical inflows with HPHMax=950
+global ShortTermForecastGlobal PlotMapFiles
+ShortTermForecastGlobal =1;
+UseForm11 = 0;
+UseInflows = 1;
+MakeWeatherPlots = 1;
+PlotMapFiles = 0;
+HPH_Max = 950;
+Valve_Max = 4e3;
+
+set(handles.InflowMachine,'Value',1);
+set(handles.MoccasinMachine,'Value',0);
+set(handles.WeatherPlots,'Value',1);
+set(handles.AdjustSnowBtn, 'ForegroundColor', 'k');
+set(handles.StorMachine,'String',Stor_Curr);
+set(handles.HPHMaxBox,'String',HPH_Max);
+set(handles.ValveMachine,'String',Valves_Curr);
+set(handles.PumpMachine,'String',chelPumps);
+set(handles.HPHMachine,'String',HPH_mean);
+set(handles.ValveMaxBox,'String',Valve_Max);
+
+% % Initialize global variables designating which watersheds to model
+global ModelCHEL ModelHetchy ModelLaGrange ModelPillows
+ModelCHEL = 1;
+ModelHetchy = 0;
+ModelLaGrange = 0;
+ModelPillows = 0;
+
+% % Initialize global variables designating start and end dates
+global StartDateGlobal EndDateGlobal DataDateGlobal
+
+StartDateGlobal = datenum(2000,10,1);
+set(handles.StartDate,'String',datestr(StartDateGlobal,'mm/dd/yyyy'))
+
+EndDateGlobal = floor(now)+13;
+set(handles.EndDate,'String',datestr(EndDateGlobal,'mm/dd/yyyy'))
+
+InputFNInfo = dir(InputFNGlobal);
+if min(size(InputFNInfo))
+    %Find date input file is created - below will get data within 3 days of Input file creation date
+    DataDateGlobal = floor(min(floor(InputFNInfo.datenum)-3, now - 3));
+else
+    DataDateGlobal = floor(now - 7);
+end
+set(handles.GetDataDate,'String',datestr(DataDateGlobal,'mm/dd/yyyy'))
+
+
+function varargout = PRMS_CherryFIO_v1_OutputFcn(hObject, eventdata, handles)
+varargout{1} = handles.output;
+pause(.05);
+
+function progressText_CreateFcn(hObject, eventdata, handles)
+set(hObject,'String','. . .');
+
+function progressText_Callback(hObject, eventdata, handles)
+
+
+%   Respond to user request to change file locations; validate folders and files
+function CheckFilesAndPaths
+% % Check that params, bin and exe files all exist and are in the expected
+% locations; if Change Folders option is chosen, clear default values
+global batFN batFolder PRMSFN HetchyparamsFN CHELparamsFN LaGrangeparamsFN controlFN ...
+    OutputFolder InputFolder InputFNGlobal ChangeFolders
+
+if ChangeFolders
+    batFN = [];
+    PRMSFN = [];
+    controlFN = [];
+    OutputFolder = [];
+    InputFNGlobal = [];
+end
+
+BatExist = exist(batFN);
+PRMSExist = exist(PRMSFN);
+paramsExist = exist(CHELparamsFN);
+controlExist = exist(controlFN);
+OutputExist = exist(OutputFolder);
+InputExist = exist(InputFNGlobal);
+
+% % If the files are not found, prompt user to find them
+temppathname = 'C:\';
+if PRMSExist == 0
+    FolderExist = exist('W:\\Water\New_Folder_Structure\Models\PRMS\Model\prms4.0.3_win\projects\Cherry\');
+    if FolderExist == 7
+        [tempfilename, temppathname] = uigetfile('*', 'Choose PRMS.exe File', temppathname);
+    else
+        [tempfilename, temppathname] = uigetfile('*', 'Choose PRMS.exe File');
+    end
+    PRMSFN = [temppathname tempfilename];
+end
+
+if BatExist == 0
+    [tempfilename, temppathname] = uigetfile('*', 'Choose .bat File', temppathname); %Start open file dialog box at location of previous chosen file
+    batFN = [temppathname tempfilename];
+end
+
+if InputExist == 0
+    [tempfilename, temppathname] = uigetfile('*', 'Choose Input File', temppathname); %Start open file dialog box at location of previous chosen file
+    InputFNGlobal = [temppathname tempfilename];
+    InputFolder = temppathname;
+end
+
+if paramsExist == 0
+    if ModelHetchy
+        [tempfilename, temppathname] = uigetfile('*', 'Choose Hetchy .params File', temppathname); %Start open file dialog box at location of previous chosen file
+        HetchyparamsFN = [temppathname tempfilename];
+    end
+    if ModelCHEL
+        [tempfilename, temppathname] = uigetfile('*', 'Choose Cherry Eleanor .params File', temppathname); %Start open file dialog box at location of previous chosen file
+        CHELparamsFN = [temppathname tempfilename];
+    end
+    if ModelLaGrange
+        [tempfilename, temppathname] = uigetfile('*', 'Choose LaGrange .params File', temppathname); %Start open file dialog box at location of previous chosen file
+        LaGrangeparamsFN = [temppathname tempfilename];
+    end
+end
+
+if controlExist == 0
+    [tempfilename, temppathname] = uigetfile('*', 'Choose .control File', temppathname); %Start open file dialog box at location of previous chosen file
+    controlFN = [temppathname tempfilename];
+end
+
+if OutputExist == 0
+    OutputFolder = uigetdir(temppathname, 'Choose Output Folder'); %Start open file dialog box at location of previous chosen file
+end
+
+
+%   Adjust control file params for next PRMS run
+function RewriteControlFile(Control, StormNo, StartDate, EndDate, loadVars, saveVars)
+%   Performs rewrite of control file, residing in cell array Control
+global InputFolder OutputFolder OutputVariablesGlobal InputFNGlobal CHELparamsFN ...
+    LaGrangeparamsFN EndDateGlobal controlFN RunESPGlobal StormName StormSel
+
+[StartDateYear, StartDateMonth, StartDateDay] = datevec(StartDate);
+[EndDateYear, EndDateMonth, EndDateDay] = datevec(EndDate);
+
+temp = cell2mat(Control(1));
+el = temp(end);
+%   Animation output file
+loc = find(cellfun('size', strfind(Control, 'ani_output_file'),1));
+if any(StormNo == StormSel)
+    Control{loc+3} = sprintf('%s', [OutputFolder '\' StormName{StormNo} 'Output.out' el]);
+else
+    Control{loc+3} = sprintf('%s', [OutputFolder '\' 'NoStorm' 'Output.out' el]);
+end
+%   Stats or not
+loc = find(cellfun('size', strfind(Control, 'statsON_OFF'),1));
+Control{loc+3} = sprintf('%s', ['1' temp(end)]);
+%   Number of stat vars
+loc = find(cellfun('size', strfind(Control, 'nstatVars'),1));
+Control{loc+3} = sprintf('%s', [num2str(max(OutputVariablesGlobal)) el]);
+%   Data File location
+loc = find(cellfun('size', strfind(Control, 'data_file'),1));
+Control{loc+3} = sprintf('%s', [InputFNGlobal el]);
+%   Param File location
+loc = find(cellfun('size', strfind(Control, 'param_file'),1));
+Control{loc+3} = sprintf('%s', [CHELparamsFN el]);
+%   Model Output File location
+loc = find(cellfun('size', strfind(Control, 'model_output_file'),1));
+if any(StormNo == StormSel)
+    Control{loc+3} = sprintf('%s', [OutputFolder '\' StormName{StormNo} 'Output.txt' el]);
+else
+    Control{loc+3} = sprintf('%s', [OutputFolder '\' 'NoStorm' 'Output.txt' el]);
+end
+%   Stat Vars File location
+loc = find(cellfun('size', strfind(Control, 'stat_var_file'),1));
+if any(StormNo == StormSel)
+    Control{loc+3} = sprintf('%s', [OutputFolder '\' StormName{StormNo} 'Output.statvar' el]);
+else
+    Control{loc+3} = sprintf('%s', [OutputFolder '\' 'NoStorm' 'Output.statvar' el]);
+end
+%   Stats output file location
+loc = find(cellfun('size', strfind(Control, 'stats_output_file'),1));
+if any(StormNo == StormSel)
+    Control{loc+3} = sprintf('%s', [OutputFolder '\' StormName{StormNo} 'Output.wb' el]);
+else
+    Control{loc+3} = sprintf('%s', [OutputFolder '\' 'NoStorm' 'Output.wb' el]);
+end
+%   Start Time
+loc = find(cellfun('size', strfind(Control, 'start_time'),1));
+Control{loc+3} = sprintf('%s', [num2str(StartDateYear) el]);
+Control{loc+4} = sprintf('%s', [num2str(StartDateMonth) el]);
+Control{loc+5} = sprintf('%s', [num2str(StartDateDay) el]);
+%   End Time
+loc = find(cellfun('size', strfind(Control, 'end_time'),1));
+Control{loc+3} = sprintf('%s', [num2str(EndDateYear) el]);
+Control{loc+4} = sprintf('%s', [num2str(EndDateMonth) el]);
+Control{loc+5} = sprintf('%s', [num2str(EndDateDay) el]);
+%   Init Vars
+loc = find(cellfun('size', strfind(Control, 'init_vars_from_file'),1));
+if loadVars
+    Control{loc+3} = sprintf('%s', ['1' el]);
+else
+    Control{loc+3} = sprintf('%s', ['0' el]);
+end
+%   Save Vars
+loc = find(cellfun('size', strfind(Control, 'save_vars_to_file'),1));
+if saveVars
+    Control{loc+3} = sprintf('%s', ['1' el]);
+else
+    Control{loc+3} = sprintf('%s', ['0' el]);
+end 
+
+
+fid = fopen(controlFN, 'w');    % % Rewrite control file with new parameters
+if fid > 2
+    fprintf(fid, '%s\n', Control{:});
+    fclose(fid);
+end
+
+
+%   Run PRMS once and accumulate outputs
+function RunModelNoEsp(StormNo, handles)
+global batFN batFolder OutputFolder OutputVariablesGlobal OutputFN ...
+    HetchyPRMS EleanorPRMS CherryPRMS   Other prjFolder
+global  nMapFiles mapFileNames PRMSFN controlFN SpecialCtrl SpecialCtrlFN
+global StormList StormName StormSel
+
+set(handles.progressText,'ForegroundColor','k')
+if any(StormNo == StormSel)
+    set(handles.progressText,'String', ['Running ' StormName{StormNo} ' Simulation']);
+    drawnow;
+else
+    set(handles.progressText,'String', ['Running ' 'No-Storm' ' Simulation']);
+    drawnow;
+end
+
+mlcd = cd;
+cd(batFolder);
+dos([PRMSFN ' -C' controlFN]);
+cd(mlcd);
+
+if any(StormNo == StormSel)
+    OutputFN = [OutputFolder '\' StormName{StormNo} 'Output.statvar'];
+else
+    OutputFN = [OutputFolder '\NoStorm' 'Output.statvar'];
+end
+
+if exist(OutputFN, 'file') %% Make sure file exists
+    TempData = importdata(OutputFN, ' ', max(OutputVariablesGlobal)+1);
+    TempData = TempData.data;
+    HetchyPRMS = [HetchyPRMS; TempData(:,[1:4 8])];
+end
+
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+% % Get historic and forecast data. Make plots if desired
+function GetInput_Callback(hObject, eventdata, handles)
+delete(findobj(allchild(0), '-regexp', 'Tag', '^Msgbox_')) %Close all message boxes
+set(handles.figure1, 'pointer', 'watch');
+
+% % Call global variables used in this module
+global InputFNGlobal UseForm11 EndDateGlobal MakeWeatherPlots DataDateGlobal
+global ShortTermForecastGlobal NewInputData FIODailyDir FIOParentDir
+global plt pldata   %   For retrieval of edited data from EditPlot
+global TIME  Delta_Ch  Q_Ch_hrly  HPH_wiski Ch_inflows StormList StormName chelPumps
+global Ch_storage FIOExcelFile 
+
+if sum(StormList) < 1
+    set(handles.figure1, 'pointer', 'arrow');
+    set(handles.progressText,'String','Please select at least one event size!');
+    disp('* * * must select at least one event size! * * *');
+    return
+end
+
+% InputFNInfo = dir(InputFNGlobal);
+% StartGetData = floor(min(floor(datenum(InputFNInfo.date))-1, now - 3)); 
+%Find date input file is created - below will get data within 3 days of Input file creation date
+StartGetData = DataDateGlobal;
+NewInputData = [];
+
+%   Prms Cols (1-6 is datevec)
+%           7   8   9  10  11  12  13  14  15
+%   Tmax: HEM BKM TUM CVM MHH PDS HRS SLI PCR
+%          16  17  18  19  20  21  22  23  24
+%   Tmin: HEM BKM TUM CVM MHH PDS HRS SLI PCR
+%          25  26  27  28  29  30  31  32  33
+%   Pcp:  HEM BKM TUM CVM MHH PCR YYV GNL EIN
+
+%   get_PRMS_form11 columns: (1 added to F11 output index below) datenum-1
+Form11OutputIndices = [7; 16; 25;   % HEM_MaxT-2 HEM_MinT-3 HEM_pp-4
+    10; 19; 28;  % CVM_MaxT-5 CVM_MinT-6 CVM_pp-7
+    11; 20; 29;  % MCN_MaxT-8 MCN_MinT-9 MCN_pp-10
+    33; 31];     % EIN_pp 11 YYV_pp 12
+%                      34; 35; 36   (not used) % HH_inflow 13 CHEL_inflow 14 LA_inflow 15
+
+% CDEC station names; green River replaces Moccasin. Buck Meadows replaces Intake
+tempStas = {'HEM'; 'BKM'; 'TUM'; 'CVM'; 'MHH'; 'PDS'; 'HRS'; 'SLI'; 'PCR'};
+pcpStas = {'HEM'; 'BKM'; 'TUM'; 'CVM'; 'MHH'; 'PCR'; 'YYV'; 'GNL'; 'EIN'}; % BKM subs for EIN (below) off network!
+
+CDECStations = {'BKM', 'TUM', 'PDS', 'HRS', 'SLI', 'PCR', 'GNL', 'HEM', 'CVM', 'MHH', 'YYV'};
+% PRMS Indices for CDEC data
+CDECIndexOut = [8 17 26;    % BKM
+    9 18 27;    % TUM
+    12 21 0;    %PDS
+    13 22 0;    %HRS
+    14 23 0;    %SLI
+    15 24 30;    %PCR
+    32 0 0;      %GNL
+    7 16 25;     %HEM
+    10 19 28;    %CVM
+    11 20 29;    %MHH
+    31 0 0];    %YYV
+CDECSensor =  [31 32 45;    % BKM
+    31 32 45;    % TUM
+    31 32 0;    %PDS
+    31 32 0;    %HRS
+    31 32 0;    %SLI
+    31 32 45;    %PCR
+    45 0 0;     %GNL
+    31 32 45;    %HEM
+    31 32 45;    %CVM
+    31 32 45;    %MHH
+    45 0 0];    %YYV
+
+% % Get Historic data in Form 11 or CDEC
+if StartGetData < min(EndDateGlobal, floor(now))
+    
+    % % Set historic data date in PRMS format
+    count = 0;
+    for i = StartGetData:min(EndDateGlobal, floor(now))
+        count = count+1;
+        [yyt, mmt, ddt] = datevec(i);
+        NewInputData(count,1:3) = [yyt, mmt, ddt];
+    end
+    
+    
+    % % % %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+    % get current inflow observation estimates for cherry reservoir
+    set(handles.progressText,'String','Getting USGS and Wiski Flow Data');
+    drawnow;
+    startDate = DataDateGlobal; 
+    endDate = now;
+    
+    try
+        % Wiski Data % % %
+        ts_id = '7577042';      % HPH_Pwr_Draft_60.E
+        addpath('W:\Water\New_Folder_Structure\Tools\MATLAB');
+        [HPH_wiski, wTime] = get_Wiski_ts(ts_id,startDate, endDate);
+        
+        
+        % USGS data % % %
+        siteNums = {'11277200' '11277300'};     % cherry lk & cherry cr blw res, respectively
+        [z_ch,~,t1] = get_USGS(siteNums{1}, startDate-1, endDate);
+        [~, Q_Ch, t2] = get_USGS(siteNums{2}, startDate-1, endDate);
+        
+        % filter reservoir elevation data for noise
+        windowSize = 8;
+        b = (1/windowSize)*ones(1,windowSize);
+        elev = filter(b, 1, z_ch);
+        tS = find(t1 == startDate);
+        t1 = t1(tS:end);    z_ch = z_ch(tS:end);    elev = elev(tS:end);
+        tS = find(t2 == startDate);
+        t2 = t2(tS:end);    Q_Ch = Q_Ch(tS:end);
+        
+        Ch_storage = CherryStorage(elev);
+        
+        % calculate hourly difference
+        Delta_Ch = diff(Ch_storage(1:4:end)).*12.1; % (12.1: ac-ft/hr to cfs)
+        t1 = t1(1:4:end);   t1 = t1(1:end-1);
+        
+        % use downsample fcn to aggregate to hourly average flow
+        [Q_Ch_hrly, t2] = downsample_ts(Q_Ch, t2, 'hour');
+        
+        t_ends = [t1(end) t2(end) wTime(end)];
+        tMin   = min(t_ends);
+        
+        binT = t_ends == min(t_ends);
+        if binT(3) == 1
+            tDiff = abs(wTime-tMin);
+        else
+            tDiff = abs(t1 - tMin);
+        end
+        
+        tS = find(tDiff == min(tDiff));
+        
+        TIME = t1(1:tS);
+        
+        % in some cases, TIME vector ends up with off-hour stamps
+        % (e.g., 14:30) resulting from small data gaps in USGS pull
+        % here, make them all fall on the hour
+        dV = datevec(TIME); dV(:,5) = 0;    TIME = datenum(dV);
+        
+        Delta_Ch   = Delta_Ch(1:tS);
+        Q_Ch_hrly  = Q_Ch_hrly(1:tS);
+        HPH_wiski  = HPH_wiski(1:tS);
+        Pump_vec   = chelPumps.*ones(length(HPH_wiski),1);
+        
+        % inflow = delta_Storage + HPH + Ch_stream
+        Ch_inflows = Delta_Ch + HPH_wiski + Q_Ch_hrly' - Pump_vec;
+        
+        set(handles.progressText,'String','Finished with inflow calculations');
+        drawnow;    pause(1.0);
+    catch
+        set(handles.progressText,'String','Unable to get data for inflow calcs, proceeding to next step ...');
+        drawnow;    pause(1.0);
+    end
+    
+    if UseForm11 % Use if in Moccasin and can access Form 11 data directly
+        set(handles.progressText,'String','Getting Form 11 Historic Data');
+        drawnow;
+        
+        % % Gets all Form 11 data used in PRMS
+        [Form11Data, ~] = get_PRMS_form11(StartGetData, min(EndDateGlobal, floor(now)));
+        if ~numel(Form11Data)   %   get_PRMS_form11 returns empty array on failure
+            set(handles.progressText,'String','!!! Failed to Load some of Form 11 Data !!!');
+            drawnow;
+            return
+        end
+        % % Reorganize Form 11 data to PRMS order
+        for i = 1:numel(Form11OutputIndices)-1
+            NewInputData(:,Form11OutputIndices(i)) = Form11Data(:,i+1); % Add 1 to skip timestamp field
+        end
+        
+        % % Get CDEC Data for stations not in Form 11
+        set(handles.progressText,'String','Getting CDEC Historic Data');
+        drawnow;
+        
+        for i = 1:7 %Run through stations not in F11
+            for j = 1:3
+                if CDECSensor(i,j) > 0
+                    url = ['http://cdec.water.ca.gov/dynamicapp/req/CSVDataServlet?Stations=' ...
+                        CDECStations{i} '&SensorNums=' num2str(CDECSensor(i,j)) ...
+                        '&dur_code=D&Start=' datestr(StartGetData, 'yyyy-mm-dd') ...
+                        '&end_date=&data_wish=View+CSV+Data'];
+                    [t, data] = get_CDECDailyCSV(url);
+                    NewInputData(1:numel(t),CDECIndexOut(i,j)) = data;
+                end
+            end
+        end
+    else
+        set(handles.progressText,'String','Getting CDEC Historic Data');
+        drawnow;
+        
+        for i = 1:length(CDECStations) %Run through stations incl HEM CVM MHH YYV
+            for j = 1:3
+                if CDECSensor(i,j) > 0
+                    url = ['http://cdec.water.ca.gov/dynamicapp/req/CSVDataServlet?Stations=' ...
+                        CDECStations{i} '&SensorNums=' num2str(CDECSensor(i,j)) ...
+                        '&dur_code=D&Start=' datestr(StartGetData, 'yyyy-mm-dd') ...
+                        '&end_date=&data_wish=View+CSV+Data'];
+                    [t, data] = get_CDECDailyCSV(url);
+                    NewInputData(1:numel(t),CDECIndexOut(i,j)) = data;
+                end
+            end
+        end
+        NewInputData(:,33) = NewInputData(:,26); %Early Intake = Buck Meadows (no better replacement available)
+    end
+end
+
+% % Get Short Term Forecast if requested
+if ShortTermForecastGlobal
+    addpath('W:\Water\New_Folder_Structure\tools\Matlab');
+    set(handles.progressText,'String','Getting NOAA WRH Forecast Data');
+    drawnow;
+    %tempStas = {'HEM'; 'BKM'; 'TUM'; 'CVM'; 'MHH'; 'PDS'; 'HRS'; 'SLI'; 'PCR'};
+    %pcpStas = {'HEM'; 'BKM'; 'TUM'; 'CVM'; 'MHH'; 'PCR'; 'YYV'; 'GNL'; 'EIN'}; % BKM subs for EIN (below) off network!
+    
+    % % Latitude and longitude of forecast locations
+    WeatherStationLocations = [
+        37.945 -119.783;% Hetch Hetchy
+        37.823 -120.098;% Buck Meadow
+        37.876 -119.348;% Tuolumne Meadows
+        37.975 -119.916;% Cherry Valley
+        37.810 -120.297;% Moccasin
+        38.047 -119.670;% Paradise Meadow
+        38.163 -119.660;% Horse Meadow
+        38.092 -119.430;% Slide Canyon
+        38.200 -119.983;% Pinecrest
+        37.740 -119.589;% Yosemite
+        38.204 -119.89319;% Gianelli
+        37.875365, -119.957013];% Early Intake
+    
+    tempInd = [1 2 3 4 5 6 7 8 9 0 0 0];
+    pcpInd =  [1 2 3 4 5 0 0 0 6 7 8 9];
+    for WS = 1:numel(WeatherStationLocations(:,1))
+        Lat = WeatherStationLocations(WS,1);
+        Long = WeatherStationLocations(WS,2);
+        theURL = ['https://www.wrh.noaa.gov/forecast/wxtables/index.php?lat='...
+            num2str(Lat) '&lon=' num2str(Long)]; %'&table=pfm&duration=7&interval=6'];
+        
+        s = urlread(theURL);
+        dta = strfind(s, 'Daily-Temp');     %   Find Daily Temp line of NWS table
+        sdt = s(dta:dta+2000);
+        temps = cellfun(@str2double, regexp(sdt, '\d{2,3}', 'match'));
+        days = floor(now()):floor(now())+6;
+        if strfind(sdt, '--')  % Is first min temp missing?
+            maxT = temps([1 2 4 6 8 10 12]);
+            minT = [NaN temps([3 5 7 9 11 13])];
+        else
+            maxT = temps([1 3 5 7 9 11 13]);
+            minT = temps([2 4 6 8 10 12 14]);
+        end
+        
+        dpa = strfind(s, 'Precip');     %   Find Precip line
+        sdp = s(dpa(4):dpa(4)+4000);
+        pcps = regexp(sdp, '\d.\d{2}', 'match');
+        pcps = cellfun(@str2double, pcps);
+        if WS == 1
+            Forecast = zeros(7,33);
+            Forecast(:) = NaN;
+            Forecast(:,1:6) = datevec(days');
+        end
+        if tempInd(WS)
+            Forecast(:,6+tempInd(WS)) = maxT';
+            Forecast(:,15+tempInd(WS)) = minT';
+        end
+        if pcpInd(WS)      %    NWS table has variable number of days QPF
+            if numel(pcps) >= 28
+                pcpVec = [sum(pcps(1:4)); sum(pcps(5:8)); sum(pcps(9:12)); sum(pcps(13:16)); ...
+                    sum(pcps(17:20)); sum(pcps(21:24)); sum(pcps(25:28))];
+            elseif numel(pcps) >= 24
+                pcpVec = [sum(pcps(1:4)); sum(pcps(5:8)); sum(pcps(9:12)); sum(pcps(13:16)); ...
+                    sum(pcps(17:20)); sum(pcps(21:24)); NaN];
+            elseif numel(pcps) >= 20
+                pcpVec = [sum(pcps(1:4)); sum(pcps(5:8)); sum(pcps(9:12)); sum(pcps(13:16)); ...
+                    sum(pcps(17:20)); NaN; NaN];
+            elseif numel(pcps) >= 16
+                pcpVec = [sum(pcps(1:4)); sum(pcps(5:8)); sum(pcps(9:12)); sum(pcps(13:16)); ...
+                    NaN; NaN; NaN];
+            end
+            Forecast(:,24+pcpInd(WS)) = pcpVec;
+        end
+    end
+    fx = Forecast(:,7:24);  fx(fx>150) = NaN;
+    Forecast(:,7:24) = fx;
+    set(handles.progressText,'String','NOAA WRH Forecast Retrieved!');
+    drawnow;
+    pause(1);
+    
+    set(handles.progressText,'String','Getting QPF/Snow Data from CNRFC');
+    drawnow;    pause(.25);
+        
+    nT = 3; stopFlag = 0;  catch_str = 'CRNFC QPF pull failure!';
+    while ~(stopFlag ==1)
+        try
+            [qpf, snoL, dT] = get_QPF_Basin_6day();
+            snoL = snoL(3,:)';
+            stopFlag = 1;
+        catch
+            disp('failed attempt to grab cnrfc snow level');
+            pause(.25);
+            nT = nT-1;
+            if nT==0
+                disp(catch_str);
+                snoL = nan.*ones(6,1);
+                set(handles.progressText,'String',catch_str);  
+                drawnow;    pause(1);
+                stopFlag = 1;
+            end
+        end
+    end
+    
+    if nT>0
+        set(handles.progressText,'String','CNRFC Data Retrieved');  drawnow;
+        pause(1);
+    end
+    
+    % % Set other stations forecasted precip to values relative to Gianelli.
+    % Gianelli is the station most likely to see preciptiation, is used as baseline
+    OtherStationFactors = [0.645674214 0.62730595 0.455222898 0.860018693 0.534671497 0.700382142 ...
+        0.646674644 1 0.623015816];     %Precipitation for each station relative to Gianelli
+    
+    tempR = numel(NewInputData(:,1)); %Number days in output
+    
+    %Stitch together historic data with Forecast, omitting today's fcst
+    NewInputData = [NewInputData; Forecast(2:end,:)];
+    % % For today, use forecast if no measured data is available
+    for i = 1:numel(NewInputData(1,:))
+        if isnan(NewInputData(tempR,i))
+            NewInputData(tempR,i) = Forecast(1,i);
+        end
+    end
+    
+    %%%
+    % get GFS forecast beyond the end of the NDFD 6-day forecast
+    set(handles.progressText,'String','Getting GFS Extended Forecast Data ...');
+    drawnow;
+    
+    Lats  = WeatherStationLocations(:,1);
+    Longs = WeatherStationLocations(:,2);
+    
+    % gfs_025 retrieval func:
+    [Tmax, Tmin, Ptot, DT] = get_GFS_025(Lats, Longs);
+    
+    set(handles.progressText,'ForegroundColor',[0 0.3 0.2]);
+    set(handles.progressText,'String','Forecasts Retrieved!');
+    drawnow;    pause(1);
+    
+    set(handles.progressText,'ForegroundColor','k');
+    set(handles.progressText,'String','Bias correction & forecast formatting in progress ...');
+    drawnow;    pause(.5);
+    
+    % calculate average bias between
+    % NDFD and GFS forecast and apply correction
+    [common_dates, ia, ib] = intersect(days', DT-0.5);
+    tC = length(common_dates);
+    xtra_dates = length(DT) - length(common_dates);
+    if ia(1)==1
+        forecast_NDFD = Forecast(:,7:end);
+    else
+        forecast_NDFD = Forecast(ia(1):end,7:end);
+    end
+    forecast_GFS  = [Tmax(1:tC,tempInd~=0) Tmin(1:tC,tempInd~=0) Ptot(1:tC,pcpInd~=0)];
+    
+    bias_GFS = forecast_GFS - forecast_NDFD;
+    bias_mu  = nanmean(bias_GFS);
+    FXGFS    = [Tmax(:,tempInd~=0) Tmin(:,tempInd~=0) Ptot(:,pcpInd~=0)] - [bias_mu(1:18) zeros(1,9)]; 
+    
+    % round temp to nearest degree
+    FXGFS(:,1:18) = round(FXGFS(:,1:18));
+    
+    % round precip to nearest .01"
+    FXGFS(:,end-8:end) = round(FXGFS(:,end-8:end).*1e2)./1e2;
+    
+    FXGFS    = [datevec(DT-.5) FXGFS];
+    
+    % search for cases where NDFD has NaN values in its precip forecast and
+    % replace them with GFS numbers
+    precipWRH = forecast_NDFD(:,19:end);
+    precipGFS = FXGFS(1:size(precipWRH,1),end-8:end);
+    Pinds = isnan(precipWRH);
+    precipWRH(Pinds) = precipGFS(Pinds);
+        
+    % append GFS forecast to the current NewInputData matrix 
+    NewInputData = [NewInputData; FXGFS(end-xtra_dates+1:end,:)];
+           
+    % % % append storm of selected size to days 8-10 (adding temperature fields
+    % as needed)
+    StormSel = 1:length(StormList);
+    StormSel = StormSel(StormList==1);
+    
+    % get # of days since Aug1
+    [~,cM,cday] = datevec(now);
+    [~,MM,day8] = datevec(now + 8);                   % 8 is middle day of 3-day storm
+    if MM >= 8
+        iDay = datenum([0 MM day8 0 0 0]) - 213;      % 213 is aug1 julian day of year
+    else
+        iDay = datenum([1 MM day8 0 0 0]) - 213;
+    end
+    
+    % get the first 7-days' precip forecast and append the storm
+    fi = find(NewInputData(:,3) == cday & NewInputData(:,2) == cM);
+    NewInputData(fi:end-xtra_dates, end-8:end) = precipWRH; % fix precip
+    AllForecast = NewInputData(fi:end, :);
+    AllPrecip = AllForecast(1:7,end-8:end);
+    
+    % run StormMaker using Chris Graham's code from PMF analysis
+    StormOut = StormMaker(StormSel(1), iDay, AllPrecip);
+    
+    % Append Storm to NewInputData and addd days as needed to produce
+    % 14-day look-ahead (assuming dry, recurrent temps after forecast)
+    NewForecast = NewInputData(fi:end,:);
+    fxLength = size(NewForecast,1);
+    xTraDays = 14 - fxLength;
+    NEWINPUT = zeros(14,size(NewForecast,2));
+    NEWINPUT(1:size(NewForecast,1),1:end-9) = NewForecast(:,1:end-9);
+    NEWINPUT(1:size(StormOut,1),end-8:end) = StormOut;
+    fi = find(NEWINPUT(:,9) ==0, 1, 'first');
+    
+    % add in dates to end of look-ahead period
+    NEWINPUT(fi:end,1:6) = datevec(DT(end)+.5:DT(end)+xTraDays-.5);
+    
+    % produce recurrent temperatures for days outside forecast range,
+    % adding small amount of random noise to the mean of previous 3 days
+    % using the variance structure from the same three days
+    three_day_mean = nanmean(NEWINPUT(fi-3:fi-1, 7:24));
+    three_day_sigma= nanstd(NEWINPUT(fi-3:fi-1, 7:24));
+    
+    for i = fi:14
+        randoms = 0.75.*three_day_sigma.*randn(1,18);
+        NEWINPUT(i, 7:24) = round(three_day_mean + randoms);
+    end
+    
+    % % % Final New input data append here: % % % % % % % % %
+    fi = find(NewInputData(:,3) == cday);
+    NewInputData = [NewInputData(1:fi-1,:); NEWINPUT];
+
+    
+else
+    % If no forecast, don't try to calc past today!
+    EndDateGlobal = min(EndDateGlobal, floor(now));
+end
+
+% % Look for NaN or temperature = 0 (sign of missing measure). If found,
+% replace with values derived from Hetchy temperature (assumed that Hetchy
+% temperature is always collected
+% % Look for Nan in precipitation record. If found, replace with values
+% derived from Hetchy Precip (assumed that Hetchy precip is always
+% collected)
+MaxHetchyTempCorrelations = [0.97 6.3; % Buck
+    0.80 0.80; % Tuolumne
+    1.04 -2.9; % Cherry
+    1.02 10.3; % Moccasin
+    0.80 -2.1; % Paradise
+    0.79 -3.5; % Horse
+    0.81 -4.6; % Slide
+    0.96 0.50]; % Pinecrest
+
+MinHetchyTempCorrelations = [0.89 3.9; % Buck
+    0.95 -19.8; % Tuolumne
+    0.97 0.4; % Cherry
+    0.93 5.2; % Moccasin
+    1.01 -17.5; % Paradise
+    1.01 -19.7; % Horse
+    0.99 -19.2; % Slide
+    0.83 0.7]; % Pinecrest
+
+% % Monthly Precip correlations to Hetchy measured precip. Rows are months,
+% columns are stations, in order: HHprecip	BKMprecip	TUMprecip
+% CVMprecip	MCNprecip	PRCprecip	YOSprecip	GNLprecip	Intakeprecip
+
+PrecipHetchyMonthlyCorrelations = [1	1.15075705	0.767008121	1.388666694	0.930131004	1.032649063	1.076215157	1.567359099	1.057972493;
+    1	1.095200048	0.802668638	1.395821265	0.96080938	1.214909214	1.029203204	1.708387432	1.026286879;
+    1	1.078535158	0.662578535	1.280983734	0.932050951	1.106700232	0.97633187	1.622213616	1.009381186;
+    1	0.811998482	0.566579918	1.090110605	0.808013446	1.018922143	0.85155064	1.517268488	0.912790067;
+    1	0.637443728	0.704320787	1.028403026	0.59785585	1.02677867	0.771522718	1.453752262	0.786234743;
+    1	0.735313328	0.828168656	0.987191117	0.728908886	1.187833376	0.560288835	1.405384811	0.848452411;
+    1	0.048824126	0.687171447	0.918626456	0.052442436	0.509944972	0.905991577	0.824618033	0.157324234;
+    1	0.167909927	0.768664764	0.794735173	0.518648906	0.682841738	0.380589914	0.880938788	0.884300666;
+    1	0.721800363	0.669250374	0.964449933	0.426574529	0.919624793	1.3354003	1.152526341	0.649150004;
+    1	1.048235346	0.623216573	1.338177481	0.688546314	1.136180927	0.951278767	1.216263969	0.999249083;
+    1	0.921147373	0.751031758	1.335548076	0.752758671	1.073496268	0.959022391	1.428977023	0.916493487;
+    1	0.921147373	0.751031758	1.335548076	0.752758671	1.073496268	0.959022391	1.428977023	0.916493487];
+
+[R C] = size(NewInputData);
+times = datenum(NewInputData(:,1:6));
+tData = NewInputData(:,7:24);
+tData(tData(:)==0) = NaN;           %   Assume Zero temperatures are really missing values
+NewInputData(:,7:24) = tData;
+
+%   Make sure MetData_StaFit can be found
+addpath('W:\Water\New_Folder_Structure\tools\Matlab\PRMS');
+
+% only operate Edit Plot on 
+%   Pre-edit Tmax to kill bad data prior to cross-fits
+legStrs = {'Hetchy'; 'Buck'; 'Tuolumne'; 'Cherry'; 'Moccasin'; 'Paradise'; 'Horse'; 'Slide'; 'Pinecrest'};
+EditPlot(times, NewInputData(:,7:15), [], 'Max Temperatures - Bad Data -> NaN', 'degrees F', ....
+    legStrs, 'tmp.m', [], [], [], floor(now()));
+NewInputData(:,7:15) = pldata;
+
+%   Use interstation regressions to fill NaNs in Tmax columns
+if find(isnan(NewInputData(:,7:15)))
+    [newTmaxData, chgdTmaxData]  = MetData_StaFit('Tmax', tempStas, times, NewInputData(:,7:15), false);
+    NewInputData(:,7:15) = newTmaxData;
+    FilledData(:,7:15) = chgdTmaxData;
+end
+
+%   Pre-edit Tmin to kill bad data prior to cross-fits
+EditPlot(times, NewInputData(:,16:24), [], 'Min Temperatures - Bad Data -> NaN', 'degrees F', ....
+    legStrs, 'tmp.m', [], [], [], floor(now()));
+NewInputData(:,16:24) = pldata;
+
+%   Fill NaNs in Tmin columns
+if find(isnan(NewInputData(:,16:24)))
+    [newTminData, chgdTminData]  = MetData_StaFit('Tmin', tempStas, times, NewInputData(:,16:24), false);
+    NewInputData(:,16:24) = newTminData;
+    FilledData(:,16:24) = chgdTminData;
+end
+
+%   Pre-edit Pcp to kill bad data prior to cross-fits
+tStr = [StormName{StormSel(1)} ' Storm -- ' 'Daily Precip - Bad Data -> NaN'];
+legStrs = {'Hetchy'; 'Buck'; 'Tuolumne'; 'Cherry'; 'Moccasin'; 'Pinecrest'; 'Yosemite'; 'Gianelli'; 'Intake'};
+EditPlot(times, NewInputData(:,25:33), [], tStr, 'inches', ....
+    legStrs, 'tmp.m', [], [], [], floor(now()));
+NewInputData(:,25:33) = pldata;
+
+%   Fill NaNs in Pcp columns
+%if find(isnan(NewInputData(:,25:33)))
+%    [newPcpData, chgdPcpData]  = MetData_StaFit('Pcp', pcpStas, times, NewInputData(:,25:33), false);
+%    NewInputData(:,25:33) = newPcpData;
+%    FilledData(:,25:33) = chgdPcpData;
+%end
+
+FilledData(:,25:33) = NaN;
+%   Fill NaNs in Pcp columns
+for i = 1:R
+    for j = 25:33
+        if isnan(NewInputData(i,j))
+            FilledData(i,j) = PrecipHetchyMonthlyCorrelations(NewInputData(i,2),j-24)*NewInputData(i,25);
+            NewInputData(i,j) = FilledData(i,j);
+        end
+    end
+end
+
+%   Temp NaNs remaining after MetData_StaFit are filled from adjacent days
+for j = 7:24
+    for i = 1:R
+        if isnan(NewInputData(i,j))
+            if i>1 && i<R %  If not the beginning or end of time series, use the average of the day before and after
+                FilledData(i,j) = (NewInputData(i-1,j)+NewInputData(i+1,j))/2;
+            elseif i == 1       %  At the beginning, use day 2
+                FilledData(i,j) = NewInputData(i+1,j);
+            elseif i == R       %  At the end, use the day before
+                FilledData(i,j) = NewInputData(i-1,j);
+            end
+            NewInputData(i,j) = FilledData(i,j);
+        end
+    end
+end
+NewInputData = round(NewInputData,2); %% Round to 2 decimal places
+FilledData = round(FilledData,2);
+
+% % Makes plots of imported weather
+if MakeWeatherPlots
+    WeatherTime = datenum(NewInputData(:,1), NewInputData(:,2), NewInputData(:,3)); %Time data
+    legStrs = {'Hetchy'; 'Buck'; 'Tuolumne'; 'Cherry'; 'Moccasin'; 'Paradise'; 'Horse'; 'Slide'; 'Pinecrest'};
+    
+    % % Plot Max temperatures
+    FilledDataToPlot = [];  %   Render FilledData to (col datenum val) format for EditPlot.compData
+    for ii = 1:R
+        for jj = 7:15
+            if not(isnan(FilledData(ii,jj)))
+                FilledDataToPlot = [FilledDataToPlot; jj-6 datenum(NewInputData(ii,1:3)) FilledData(ii,jj)];
+            end
+        end
+    end
+    EditPlot(WeatherTime, NewInputData(:,7:15), [], 'Max Temperatures', 'degrees F', ....
+        legStrs, 'tmp.m', legStrs, FilledDataToPlot, [], floor(now()));
+    NewInputData(:,7:15) = pldata;
+    
+    % % Plot Min temperatures
+    FilledDataToPlot = [];
+    for ii = 1:R
+        for jj = 16:24
+            if not(isnan(FilledData(ii,jj)))
+                FilledDataToPlot = [FilledDataToPlot; jj-15 datenum(NewInputData(ii,1:3)) FilledData(ii,jj)];
+            end
+        end
+    end
+    EditPlot(WeatherTime, NewInputData(:,16:24), [], 'Min Temperatures', 'degrees F', ....
+        legStrs, 'tmp.m', legStrs, FilledDataToPlot, [], floor(now()));
+    NewInputData(:,16:24) = pldata;
+    
+    % % Plot Precipitation
+    FilledDataToPlot = [];
+    for ii = 1:R
+        for jj = 25:33
+            if not(isnan(FilledData(ii,jj)))
+                FilledDataToPlot = [FilledDataToPlot; jj-24 datenum(NewInputData(ii,1:3)) FilledData(ii,jj)];
+            end
+        end
+    end
+    legStrs = {'Hetchy'; 'Buck'; 'Tuolumne'; 'Cherry'; 'Moccasin'; 'Pinecrest'; 'Yosemite'; 'Gianelli'; 'Intake'};
+    EditPlot(WeatherTime, NewInputData(:,25:33), [], 'Daily Precipitation', 'inches', ....
+        legStrs, 'tmp.m', legStrs, FilledDataToPlot, [], floor(now()));
+    NewInputData(:,25:33) = pldata;
+end
+
+
+% for each selected storm size (for n>=1), append the storm and write an
+% input file (do for all in 'StormSel')
+if length(StormName) ~= length(StormList)
+    disp('StormList must have a corresponding suffix string! - please fix me');
+    return
+end
+
+% initialize output CVM storm table:
+StormOut = round(StormOut.*1e2)./1e2;       % round to .01"
+StormTableCVM(:,1) = [sum(StormOut(1:7,4)); StormOut(8:10,4)];
+
+for q = 1:length(StormSel) + 1
+    
+    % for q beyond 1, get the next storm size and append it to the input
+    if q>1
+        
+        if q<=length(StormSel)
+            % get the next Storm Event
+            StormOut = StormMaker(StormSel(q), iDay, AllPrecip);  % iDay and AllPrecip are fixed
+            StormOut = round(StormOut.*1e2)./1e2;       % round to .01"
+            StormNew = StormOut(end-2:end,:);
+            StormTableCVM(:,q) =  round([sum(StormOut(1:7,4)); StormOut(8:10,4)].*1e2)./1e2;
+            
+            % append it to NewInputData for overwrite
+            inputInds = fi+7 : fi+9;
+            NewInputData(inputInds,end-8:end) = StormNew;
+        else
+            inputInds = fi+7 : fi+9;
+            NewInputData(inputInds,end-8:end) = zeros(3,9);         % NO-storm case
+        end
+        
+    end
+    
+    % % Stitch together Old Input File with Historic and Forecast Data
+    [yy5 mm5 dd5] = datevec(StartGetData);
+    Astr = fileread(InputFNGlobal); %Import Input File
+    Aofs = strfind(Astr, [num2str(yy5) ' ' num2str(mm5) ' ' num2str(dd5)]);  %% Find first call of Start Date
+    
+    Astr = Astr(1:min(Aofs)-1);
+    A = regexp(Astr, '\n', 'split');  %Create temporary variable with text of PRMS input file
+    
+    % % Take Output matrix and convert to strings
+    for i = 1:numel(NewInputData(:,1))
+        temp3 = num2str(NewInputData(i,1));
+        for j = 2:numel(NewInputData(1,:))
+            temp3 = [temp3 ' ' num2str(NewInputData(i,j))];
+        end
+        temp3 = [temp3 '\r'];
+        Temp{i} = sprintf(temp3);
+    end
+    
+    % % Stitch together Original import data file and constructed historic and
+    % forecast files
+    B = [A(1:end-1) Temp];
+    
+    % % Write new input file
+    fid = fopen(InputFNGlobal, 'w');
+    if fid > 2
+        fprintf(fid, '%s\n', B{:});
+        fclose(fid);
+    end
+    
+    if q<=length(StormSel)
+        newFileStr = [InputFNGlobal(1:end-5) '_' StormName{StormSel(q)} InputFNGlobal(end-4:end)];
+    else
+        newFileStr = [InputFNGlobal(1:end-5) '_' 'NoStorm' InputFNGlobal(end-4:end)];
+    end
+    copyfile(InputFNGlobal, newFileStr);
+    s1 = strfind(newFileStr, '\');
+    % copy to current daily directory
+    copyfile(InputFNGlobal, [FIODailyDir newFileStr(s1(end):end)]);
+end
+
+% % % XLS WRITE % % %
+% write Wx forecast data to FIOExcelFile
+Dates    = datenum(NewInputData(:,1:3));
+TmaxData = NewInputData(:,7:15);
+TminData = NewInputData(:,16:24);
+PcpData  = NewInputData(:,25:33);
+Tmax_Cherry = round(TmaxData(:,4));
+Tmin_Cherry = round(TminData(:,4));
+Pcp_Cherry  = round(PcpData(:,4).*1e2)./1e2;
+Days = Dates - floor(now) + 1;
+StormTableCVM = [StormTableCVM; sum(StormTableCVM)];
+a1 = {'Cherry FIO'};
+a2 = {'Date' 'Day' 'Tmax (F)' 'Tmin (F)' 'Precip (in)' 'Snow Level (ft)'};
+ee = {'Storm Day 1'; 'Storm Day 2'; 'Storm Day 3'};
+sT = {'Day' StormName{StormList==1}};
+eeRow = find(Days == 8)+2;  eeRow = ['e' num2str(eeRow)];   
+ssRow = find(Days == 1)+2;  ssRow = ['f' num2str(ssRow)];
+hh = {'1-7 Total'; '8'; '9'; '10'; 'Total'};
+
+
+% Forecast Sheet
+% first rename FIOExcelFile if it won't write (e.g., already open by
+% current or another user)
+try
+    delete(FIOExcelFile);   % delete and re-write the file
+    xlswrite(FIOExcelFile,a1,'Forecast','a1'); 
+catch
+    xi = strfind(FIOExcelFile, '.xls')-1;
+    FIOExcelFile = [FIOExcelFile(1:xi) '_1' FIOExcelFile(xi+1:end)];
+    xlswrite(FIOExcelFile,a1,'Forecast','a1'); 
+end
+xlswrite(FIOExcelFile,a2,'Forecast','a2');  
+xlswrite(FIOExcelFile,cellstr(datestr(Dates)),'Forecast','a3');
+xlswrite(FIOExcelFile, [Days Tmax_Cherry Tmin_Cherry Pcp_Cherry], 'Forecast', 'b3');    
+xlswrite(FIOExcelFile, ee, 'Forecast', eeRow);  
+xlswrite(FIOExcelFile, snoL, 'Forecast', ssRow); 
+
+% Storm Table Sheet
+xlswrite(FIOExcelFile, hh, 'StormTable', 'a2');   pause(.1);
+xlswrite(FIOExcelFile, sT, 'StormTable', 'a1');   pause(.1);
+xlswrite(FIOExcelFile, StormTableCVM, 'StormTable', 'b2');    
+
+
+progStr = 'New Input Files Created!';
+set(handles.progressText,'String', progStr);
+set(handles.progressText,'foreGroundColor','b');    drawnow;   pause(1.5);
+progStr = ['Input/Wx Files Added to ' FIODailyDir];
+set(handles.progressText,'String', progStr);    pause(.5);
+set(handles.figure1, 'pointer', 'arrow');
+
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+% Orchestrate preparation of files and execute model, plot output
+function RunModel_Callback(hObject, eventdata, handles)
+% % Initialize all global variables used in this module
+global RunESPGlobal UseForm11 AdjustSnow ASODates ASOUseDates ASOSWE StartDate UseInflows chelPumps
+global StartDateGlobal EndDateGlobal OutputVariablesGlobal MakeOutputPlots
+global batFN batFolder PRMSFN HetchyparamsFN CHELparamsFN controlFN OutputFolder InputFolder InputFNGlobal VarsFN
+global ModelCHEL ModelHetchy ModelLaGrange ModelPillows HetchyPRMS EleanorPRMS CherryPRMS
+global   Other FIOExcelFile NewInputData FIODailyDir StormSel FIOFIOExcelFile 
+global PlotMapFiles nMapFiles mapFileNames SpecialCtrl SpecialCtrlFN saveEndVars nsubFN 
+global TIME  Delta_Ch  Q_Ch_hrly  HPH_wiski Ch_inflows StormList StormName FIOParentDir
+
+CheckFilesAndPaths; %   Confirm existence of directories and files, get new locations
+WSName = {'Hetchy'; 'CherryEleanor'; 'LaGrange'; 'Pillows'};
+if AdjustSnow
+    ASODeleteDates = ASOUseDates(:)==0;
+    ASODates(ASODeleteDates)=[];
+    ASOSWE(ASODeleteDates,:)=[];
+    nASO = numel(ASODates);
+end
+bfnf = strfind(batFN, '\');
+batFolder = batFN(1:bfnf(end));
+HetchyPRMS = [];
+EleanorPRMS = [];
+CherryPRMS = [];
+
+StormSel = 1:length(StormList);
+StormSel = StormSel(StormList==1);
+
+Control = regexp(fileread(controlFN), '\n', 'split');
+% copyfile([InputFolder '\CherryBase.params'], CHELparamsFN);
+HHParams = regexp(fileread(CHELparamsFN), '\n', 'split');
+
+targVars = {'climateflow' 'Pkwater_equiv'}; %   module and name of variable to sub with ASO data
+
+
+%   Main Calculation Loop: Run through the list of selected storms
+for q = 1:length(StormSel)+1
+    
+    if q<=length(StormSel)
+        StormNo = StormSel(q);
+        nsubFN = [OutputFolder '\' StormName{StormNo} 'Output.out.nsub'];
+    else
+        StormNo = 99;
+        nsubFN = [OutputFolder '\' 'NoStorm' 'Output.out.nsub'];
+    end
+    
+    
+    % % % ASO Adjustments, if desired, happen here %%%%%%%%%%%%%%%%%%%%
+    if AdjustSnow    %   Go thru history, resetting SWE at chosen ASO dates
+        for j=1:nASO
+            if j==1
+                RewriteControlFile(Control, StormNo, StartDateGlobal, ASODates(1), 0, 1);
+            else
+                RewriteControlFile(Control, StormNo, ASODates(j-1)+1, ASODates(j), 1, 1);
+                targData = PRMS_getVars(VarsFN, controlFN, HetchyparamsFN, targVars);
+                newVarData = {[targData{1}(1:22,1); ASOSWE(j-1,:)']};  %   First 22 are pillows sites
+                PRMS_substituteVars(VarsFN, controlFN, HetchyparamsFN, targVars, newVarData);
+            end
+            
+            RunModelNoEsp(StormNo, handles);
+            % read statvar file and append to csv file
+            
+        end
+        RewriteControlFile(Control, StormNo, ASODates(nASO)+1, EndDateGlobal, 1, 0);
+        targData = PRMS_getVars(VarsFN, controlFN, HetchyparamsFN, targVars);
+        newVarData = {[targData{1}(1:22,1); ASOSWE(nASO,:)']};  %   First 22 are pillows sites
+        PRMS_substituteVars(VarsFN, controlFN, HetchyparamsFN, targVars, newVarData);
+    else
+        RewriteControlFile(Control, StormNo, StartDateGlobal, EndDateGlobal, 0, 0);
+    end
+    % % % End of ASO Adjustments %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+    
+    
+    % get the current storm's file string info from the daily directory
+    if q<=length(StormSel)
+        cFileStr = [FIODailyDir  '\' 'Current_PRMS_Input_FIO_' StormName{StormSel(q)} InputFNGlobal(end-4:end)];
+    else
+        cFileStr = [FIODailyDir  '\' 'Current_PRMS_Input_FIO_' 'NoStorm' InputFNGlobal(end-4:end)];
+    end
+    
+    % if it doesn't exist, instruct user to run the input gathering
+    % function first
+    if ~exist(cFileStr)
+        disp('PRMS input file not found!');
+        disp('Please run "Get Input" function first!');
+        return
+    end
+    
+    % copy the current file name back to the standard input directory
+    % (this is the input data called by the PRMS control file)
+    copyfile(cFileStr, InputFNGlobal);
+    
+    % % % Run PRMS %%%% %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+    RunModelNoEsp(StormNo, handles);
+    %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+    
+    % copy the .nsub output file to the output directory
+    s1 = strfind(nsubFN, '\');
+    copyfile(nsubFN, [FIODailyDir '\' nsubFN(s1(end)+1:end)]);
+    
+    [YYY MMM DDD hh mm ss] = datevec(now);
+    a = {'Timestep' 'Year' 'Month' 'Day' 'Hetchy', 'Eleanor', 'Cherry'};
+    if ModelHetchy && ModelCHEL && UseForm11 && StormNo == 2
+        ofn = {['W:\Water\New_Folder_Structure\Models\PRMS\Model\prms4.0.3_win\projects\Tuolumne\output\PRMS Output\All PRMS ' num2str(YYY) num2str(MMM) num2str(DDD) '_' num2str(hh)]; ...
+            'W:\Water\New_Folder_Structure\Analyses\Reservoir_filling\WY2017\All PRMS Current'};
+        for k=1:1   %2
+            %                    xlswrite(ofn{k}, a, 'All Model', 'A1')
+            writetable(cell2table(a), ofn{k}, 'Sheet', 'All Model', 'Range', 'A1', ...
+                'WriteVariableNames', false);
+            %                    xlswrite(ofn{k}, [HetchyPRMS EleanorPRMS CherryPRMS], 'All Model', 'A2')
+            writetable(array2table([HetchyPRMS EleanorPRMS CherryPRMS]), ofn{k}, 'Sheet', 'All Model', ...
+                'Range', 'A2', 'WriteVariableNames', false);
+            %                    xlswrite(ofn{k}, a, 'Last Week', 'A1')
+            writetable(array2table(a), ofn{k}, 'Sheet', 'Last Week', 'Range', 'A1', ...
+                'WriteVariableNames', false);
+            %                    xlswrite(ofn{k}, [HetchyPRMS(end-7:end,:) EleanorPRMS(end-7:end) CherryPRMS(end-7:end)], ...
+            %                       'Last Week', 'A2')
+            writetable(array2table([HetchyPRMS(end-7:end,:) EleanorPRMS(end-7:end) CherryPRMS(end-7:end)]), ...
+                ofn{k}, 'Sheet', 'Last Week', 'Range', 'A2', 'WriteVariableNames', false);
+        end
+    end
+    
+    if any(StormSel == StormNo)
+        set(handles.progressText,'ForegroundColor',[0 0.3 0.2])
+        set(handles.progressText,'String', [StormName{StormNo} ' Simulation Done!']);
+        drawnow; pause(.5);
+    else
+        set(handles.progressText,'ForegroundColor',[0 0.3 0.2])
+        set(handles.progressText,'String', ['No-Storm' ' Simulation Done!']);
+        drawnow; pause(.5);
+    end
+    
+    % % % Plot Obs/Mod Cherry Inflows
+    if q<=length(StormSel)
+        axes(handles.inflowPlot);   axis off;
+        set(handles.inflowPlot,'visible','off');
+        [allOut, dt] = nsub_parse_2(nsubFN,2,0);
+        allQ   = allOut(:,:,1);
+        allSWE = allOut(:,:,2);
+        dt = datenum(dt);   ch_inflow = allQ(:,2);
+        if isempty(TIME)
+            d_start = find(dt == floor(now-3));
+        else
+            d_start = find(dt == floor(now));
+        end
+        dt = dt(d_start:end);
+        ch_inflow = ch_inflow(d_start:end);
+        nX = [floor(now); floor(now)];
+        nY = [0; 10*ceil(max(ch_inflow))];
+        % run CG smoothing algorithm
+        ch_smooth = DailytoHourlyInterp(ch_inflow);
+        dt_i      = linspace(dt(1),dt(end)+1,length(ch_smooth));
+        hL(q) = plot(dt_i,ch_smooth,'b','linewidth',2);
+        hold on;
+        
+        if q == length(StormSel)
+            if ~isempty(TIME)
+                tS = find(TIME == floor(now));
+                plot(TIME(1:tS),Ch_inflows(1:tS),'k-','lineWidth',2);
+                plot(nX,nY,'r--','linewidth',2);
+                lStr = [StormName(StormSel)' {'Q_o_b_s'} {'now'}];
+                legend(lStr);
+            else
+                plot(nX,nY,'r--','linewidth',2);
+                lStr = [StormName(StormSel)' {'now'}];
+                legend(lStr);
+            end
+        end
+        
+        grid on;    hold on;    set(gca,'fontWeight','bold');
+        set(handles.inflowPlot,'visible','on');
+        ax = gca;
+        datetick('x','ddd');
+        ax.YRuler.Exponent = 0;
+        labels = string(ax.XAxis.TickLabels);
+        labels(2:2:end) = NaN;
+        ax.XAxis.TickLabels = labels;
+        ylabel('Measured/Modeled Inflows [cfs]');      ytickformat('%,d');
+        title('PRMS Modeled Reservoir Inflows');
+        axis([floor(now)-3 dt_i(end) -500 ceil(max(ch_smooth))]);
+        
+    end
+    
+    
+    %%% make fig
+    if q<=length(StormSel)
+        figure(99);
+        [allOut, dt] = nsub_parse_2(nsubFN,2,0);
+        allQ   = allOut(:,:,1);
+        allSWE = allOut(:,:,2);
+        dt = datenum(dt);   ch_inflow = allQ(:,2);
+        if isempty(TIME)
+            d_start = find(dt == floor(now-3));
+        else
+            d_start = find(dt == floor(now));
+        end
+        dt = dt(d_start:end);
+        ch_inflow = ch_inflow(d_start:end);
+        nX = [floor(now); floor(now)];
+        nY = [0; 10*ceil(max(ch_inflow))];
+        % run CG smoothing algorithm
+        ch_smooth = DailytoHourlyInterp(ch_inflow);
+        dt_i      = linspace(dt(1),dt(end)+1,length(ch_smooth));
+        hL(q) = plot(dt_i,ch_smooth,'b','linewidth',2);
+        hold on;
+        
+        if q == length(StormSel)
+            
+            x1 = floor(now);    x2 = x1+7;
+            y1 = -500;          y2 = ceil(max(ch_smooth))+1e3;
+            X = [x1 x2 x2 x1];  Y = [y1 y1 y2 y2];
+            patch(X,Y,'b','faceAlpha',.08,'edgeColor','none');
+            x1 = x2;            x2 = x1+3;
+            X = [x1 x2 x2 x1];
+            patch(X,Y,'r','faceAlpha',.08,'edgeColor','none');
+            
+            if ~isempty(TIME)
+                tS = find(TIME == floor(now));
+                hp1=plot(TIME(1:tS),Ch_inflows(1:tS),'k-','lineWidth',2);
+                hp2=plot(nX,nY,'r--','linewidth',2);
+                lStr = [StormName(StormSel)' {'Q_o_b_s'} {'now'}];
+                legend([hL hp1 hp2],lStr);
+            else
+                hp = plot(nX,nY,'r--','linewidth',2);
+                lStr = [StormName(StormSel)' {'now'}];
+                legend([hL hp],lStr);
+            end
+        end
+        
+        set(gca,'XTick',dt(1)-3:1:dt(end));
+        ax = gca;
+        labels = string(datestr(dt(1)-3:dt(end),'mm/dd'));
+        ax.XAxis.TickLabels = labels;
+        ax.YRuler.Exponent = 0;
+        ylabel('cubic feet per second');      ytickformat('%,d');
+        title('PRMS Modeled Reservoir Inflows');
+        axis([floor(now)-3 dt_i(end) -50 ceil(max(ch_smooth))]);
+        grid on;
+        
+    end
+      
+    
+%     if MakeOutputPlots
+%         % % Close all Message boxes
+%         delete(findobj(allchild(0), '-regexp', 'Tag', '^Msgbox_'))
+%         
+%         % % Upload modeled flow data
+%         OutputFN = [OutputFolder '\' WSName{StormNo} 'Output.statvar'];
+%         if exist(OutputFN, 'file') %% Make sure file exists
+%             b = dir(OutputFN);
+%             
+%             if b.bytes > 5000 %% Make sure file is big (not imcomplete)
+%                 ModeledInflow = importdata(OutputFN, ' ', max(OutputVariablesGlobal)+1);
+%                 ModeledInflow = ModeledInflow.data;
+%                 [R C] = size(ModeledInflow);
+%             end
+%         end
+%         
+%         % % Upload measured flow data from Wiski
+%         addpath('W:\Water\New_Folder_Structure\tools\Matlab');
+%         [times, nameList, staDat] = Wiski_Group_Xtab('53594', StartDateGlobal, EndDateGlobal, 0);
+%         
+%         if StormNo <= 2
+%             hhCol = find(cellfun('size', strfind(nameList, 'HH_'),2));
+%             chCol = find(cellfun('size', strfind(nameList, 'CH_'),2));
+%             elCol = find(cellfun('size', strfind(nameList, 'EL_'),2));
+%             MeasuredInflows = [times staDat(:,hhCol) staDat(:,chCol)+staDat(:,elCol)];
+%         end
+%         
+%         % % Make monthly time series for x ticks
+%         count = 0;
+%         for i = 1969:2017
+%             for j = 1:12
+%                 count = count+1;
+%                 D12(count) = datenum(i,j,1);
+%             end
+%         end
+%         
+%         % % Plot up modeled and measured flow data
+%         PlotTime = datenum(ModeledInflow(:,2), ModeledInflow(:,3), ModeledInflow(:,4));
+%         figure(100*StormNo)
+%         hold on
+%         plot(MeasuredInflows(:,1), MeasuredInflows(:,StormNo+1), 'b', 'linewidth', 3)
+%         if RunESPGlobal
+%             T2 = datenum(ESPOutputQ(2:end,2), ESPOutputQ(2:end,3), ESPOutputQ(2:end,4));
+%             plot(T2, ESPOutputQ(2:end,5:end))
+%             plot(T2, median(ESPOutputQ(2:end,5:end)'), '--k', 'linewidth', 3)
+%             set(gca, 'xlim', [StartDateGlobal+365 EndDateGlobal+300], 'xtick', D12(1:12:end))
+%             datetick('x', 'yyyy',  'keeplimits', 'keepticks')
+%         else
+%             plot(PlotTime, ModeledInflow(:,8), 'r', 'linewidth', 3)
+%             set(gca, 'xlim', [StartDateGlobal+365 EndDateGlobal], 'xtick', D12(1:6:end))
+%             datetick('x', 'mm/yyyy',  'keeplimits', 'keepticks')
+%         end
+%         ylabel([WSName{StormNo} ' Inflows (cfs)'])
+%         legend('Measured', 'Modeled')
+%         FormatFigure(0,1,24)
+%         
+%         figure(100*StormNo+1)
+%         hold on
+%         plot(MeasuredInflows(:,1), MeasuredInflows(:,StormNo+1), 'b', 'linewidth', 3)
+%         if RunESPGlobal
+%             plot(T2, ESPOutputQ(2:end,5:end))
+%             plot(T2, median(ESPOutputQ(2:end,5:end)'), '--k', 'linewidth', 3)
+%             set(gca, 'xlim', [EndDateGlobal-14 EndDateGlobal+300], 'xtick', D12(1:2:end))
+%             datetick('x', 'yyyy',  'keeplimits', 'keepticks')
+%         else
+%             plot(PlotTime, ModeledInflow(:,8), 'r', 'linewidth', 3)
+%             set(gca, 'xlim', [EndDateGlobal-14 EndDateGlobal], 'xtick', EndDateGlobal-14:2:EndDateGlobal)
+%             datetick('x', 'mm/dd',  'keeplimits', 'keepticks')
+%         end
+%         ylabel([WSName{StormNo} ' Inflows (cfs)'])
+%         legend('Measured', 'Modeled')
+%         FormatFigure(0,1,24)
+%     end
+
+    Inflows(:,q) = ch_inflow;
+end
+
+% write prms modeled inflow data and storm/total volumes to xls
+iSheet = 'Inflows';
+r1 = {' ' ' ' 'Inflows (cfs)'};
+r2 = {'Date' 'Day' StormName{StormSel}};
+rS = {'3-Day Storm Inflows (AF)'; '14-Day Inflows (AF)'};
+c1 = cellstr(datestr(dt(end-13:end)));
+c2 = (1:14)';
+cD = round(Inflows(end-13:end,1:length(StormSel)));
+cD3day = sum(cD(8:10,:)).*1.9835;
+cDtot  = sum(cD).*1.9835;
+cM = round([cD3day; cDtot]./100).*100;
+
+% write
+xlswrite(FIOExcelFile,r1,iSheet,'a1');
+xlswrite(FIOExcelFile,r2,iSheet,'a2');
+xlswrite(FIOExcelFile,c1,iSheet,'a3');
+xlswrite(FIOExcelFile,c2,iSheet,'b3');
+xlswrite(FIOExcelFile,cD,iSheet,'c3');
+xlswrite(FIOExcelFile,rS,iSheet,'a17');
+xlswrite(FIOExcelFile,cM,iSheet,'c17');
+
+% write max flows to first page table
+r1 = {'Scenario' 'Date to Change' 'Peak Inflow' '3-day Storm Inflow' '14-day Inflow'};
+c1 = {'200-year return'; '500-year return'; 'Design Storm'};
+iSheet = 'Page1 Table';
+cPk = max(cD);
+xlswrite(FIOExcelFile,r1,iSheet,'a1');
+xlswrite(FIOExcelFile,c1,iSheet,'a2');
+xlswrite(FIOExcelFile,cPk',iSheet,'c2');
+xlswrite(FIOExcelFile,cM',iSheet,'d2');
+
+
+figure(99);
+FormatFigure(0,1,18)
+set(figure(99),'paperpositionmode','auto');
+fN = [FIODailyDir '\Inflows+ModelRuns' '.jpg'];
+saveas(figure(99), fN);
+close(figure(99));
+
+set(handles.progressText,'ForegroundColor','k')
+set(handles.progressText,'String', 'PRMS Simulation(s) Complete!');
+disp('Simulation(s) complete! Files written to:');
+disp(['  ' FIODailyDir]);
+drawnow;
+
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%Force PRMS Inflow Forecasts Through Reservoir Operations Model
+function RunOps_Callback(hObject, eventdata, handles)
+set(handles.figure1, 'pointer', 'watch');
+global TIME  Delta_Ch  Q_Ch_hrly  HPH_wiski Ch_inflows   FIOParentDir Ch_storage
+global InputFNGlobal  EndDateGlobal
+global FIODailyDir StormName StormList FIOExcelFile
+global chelPumps  StormSel
+global Valves_Curr HPH_mean Stor_Curr Valve_Max HPH_Max
+
+if sum( StormSel==[2,3,5]) ~= 3
+    progStr = 'Please select 200yr, 500yr, and Design Storm to run Ops Model';
+    set(handles.progressText,'ForegroundColor','r');
+    set(handles.progressText,'String', progStr);
+    return
+end
+
+set(handles.progressText,'ForegroundColor','k');
+progStr = 'Running Operational Model ...';
+set(handles.progressText,'String',progStr);
+drawnow;
+
+% gather inputs for FIRO module
+
+% get PRMS modeled inflows for 200, 500, and Design Ret. Per. storms
+% ***** EDIT THIS LATER to include adjusted inflows based on current obs
+
+storms = StormName(StormSel);
+for i = 1:length(storms)
+    fN = [FIODailyDir '\' storms{i} 'Output.out.nsub'];
+    D  = nsub_parse_2(fN, 2, 0);
+    Inflows(:,i) = D(end-13:end,2,1);
+end
+
+% specify maximum spill rates for the 3 chosen events (this might need to
+% be edited later, or made into a UI control input)
+maxSpill = [0 10000 42000];
+
+tStart = EndDateGlobal - 13;    tEnd = EndDateGlobal;
+dV = tStart:tEnd;
+
+% pass all inputs to operational model
+[NoOpsStorage, NoOpsSpill, OpsStorage, OpsSpill, Valves, Pumps, Generation, dT] ...
+    = CherryFIO_Operations(Inflows, Stor_Curr*1e3, maxSpill, Valves_Curr, chelPumps, HPH_mean, HPH_Max, Valve_Max, tStart, tEnd);
+        
+for i = 1:length(dV)
+    ind = find(dT == dV(i));
+    P(i,:) = Pumps(ind+23,:);
+    V(i,:) = Valves(ind+23,:);
+    PW(i,:) = Generation(ind+23,:);
+end
+for i = 1:3
+    DM(:, 1+3*(i-1):3*i) = round([P(:,i) V(:,i) PW(:,i)]);
+end
+
+% % % WRITE % % %
+% write ops schedule to FIOExcelFile
+FIOExcelFile = [FIODailyDir '\FIOReport.xlsx'];
+% Forecast Sheet
+% first rename FIOExcelFile if it won't write (e.g., already open by
+% current or another user)
+
+
+iSheet = 'Operations';
+r1 = {'Date' 'Day' ' ' '200' ' ' ' ' '500' ' ' ' ' 'Design' ' '};
+r2 = {' ' ' ' 'Pumps (cfs)' 'Valves (cfs)' 'Power (cfs)' 'Pumps (cfs)' ...
+    'Valves (cfs)' 'Power (cfs)' 'Pumps (cfs)' 'Valves (cfs)' 'Power (cfs)'}; 
+Dates = cellstr(datestr(dV'));
+Days  = (1:14)';
+
+% get dates for which the ops changes occur for each scenario size
+diffm = diff(DM(:,[2 5 8]));
+for i = 1:3
+    idx = find(diffm(:,i)>0);
+    if isempty(idx)
+        idx = 0;
+    end
+    dInds(i) = idx;
+end
+dOps = Dates(dInds+1);
+
+try
+    xlswrite(FIOExcelFile,r1,iSheet,'a1');
+catch
+    xi = strfind(FIOExcelFile, '.xls')-1;
+    FIOExcelFile = [FIOExcelFile(1:xi) '_1' FIOExcelFile(xi+1:end)];
+    xlswrite(FIOExcelFile,r1,iSheet,'a1');
+end
+xlswrite(FIOExcelFile,r2,iSheet,'a2');
+xlswrite(FIOExcelFile,Dates,iSheet,'a3');
+xlswrite(FIOExcelFile,Days,iSheet,'b3');
+xlswrite(FIOExcelFile,DM,iSheet,'c3'); 
+xlswrite(FIOExcelFile,dOps,'Page1 Table','b2'); pause(.1);
+
+disp('Operations Simulation Complete!');
+disp(['Successfully wrote to ' FIOExcelFile]);
+
+% save figs 3, 6, 9 (from FIO_Ops Model ^^) to Daily Directory
+for i = 1:3
+    k = 3*i;
+    figure(k);
+    set(figure(k),'paperpositionmode','auto');
+    fN = [FIODailyDir '\' StormName{StormSel(i)} '_operations.jpg'];
+    saveas(figure(k), fN);
+    close(figure(k));   
+end
+
+progStr = ['Figures saved in ' FIODailyDir];
+set(handles.progressText,'String',progStr);
+pause(2);
+
+set(handles.figure1, 'pointer', 'arrow');
+progStr = 'Operational Model Run Complete!';
+set(handles.progressText,'ForegroundColor','b');
+set(handles.progressText,'String',progStr);
+
+
+% % - - - - -
+
+
+% % Choose whether to make weather plots
+function WeatherPlots_Callback(hObject, eventdata, handles)
+global MakeWeatherPlots
+MakeWeatherPlots = get(hObject,'Value');
+
+% % Choose whether to make model output plots
+function OutputPlots_Callback(hObject, eventdata, handles)
+global MakeOutputPlots
+MakeOutputPlots = get(hObject,'Value');
+
+% % Creates output variables listbox
+function OutputVariables_CreateFcn(hObject, eventdata, handles)
+if ispc && isequal(get(hObject,'BackgroundColor'), get(0,'defaultUicontrolBackgroundColor'))
+    set(hObject,'BackgroundColor','white');
+end
+
+% % Designate Start Date of simulation. Earliest date is 10/1/1969
+function StartDate_Callback(hObject, eventdata, handles)
+global StartDateGlobal
+StartDateGlobal = get(hObject,'String');
+StartDateGlobal = datenum(StartDateGlobal);
+
+if StartDateGlobal < datenum(1969,10,1)
+    StartDateGlobal = datenum(1969,10,1);
+    
+    set(handles.StartDate,'String',datestr(StartDateGlobal,'mm/dd/yyyy'))
+    
+    % % Message box to warn that start date has changed
+    msgTxt = 'Earliest possible Start Date is 10/1/1969';
+    set(handles.progressText,'String',msgTxt);
+    drawnow;
+end
+
+% % Creates Start Date entry box
+function StartDate_CreateFcn(hObject, eventdata, handles)
+if ispc && isequal(get(hObject,'BackgroundColor'), get(0,'defaultUicontrolBackgroundColor'))
+    set(hObject,'BackgroundColor','white');
+end
+
+% % Designate End Date of simulation. Latest date is today
+function EndDate_Callback(hObject, eventdata, handles)
+global EndDateGlobal
+EndDateGlobal = get(hObject,'String');
+EndDateGlobal = floor(datenum(EndDateGlobal));
+nowPlus = floor(now) + 13;
+if EndDateGlobal > nowPlus
+    EndDateGlobal = nowPlus;
+    %
+    set(handles.EndDate,'String',datestr(nowPlus,'mm/dd/yyyy'))
+    
+    % % Message box to warn that start date has changed
+    msgTxt = 'Warning - can''t set End Date past met forecast @today plus 6';
+    set(handles.progressText,'String',msgTxt);
+    drawnow;
+end
+
+% % Creates End Date entry box
+function EndDate_CreateFcn(hObject, eventdata, handles)
+global EndDateGlobal
+if ispc && isequal(get(hObject,'BackgroundColor'), get(0,'defaultUicontrolBackgroundColor'))
+    set(hObject,'BackgroundColor','white');
+    nowPlus = floor(now) + 13;
+    if EndDateGlobal > nowPlus
+    EndDateGlobal = nowPlus;
+    %
+    set(handles.EndDate,'String',datestr(nowPlus,'mm/dd/yyyy'))
+    end
+end
+
+% % Designate earliest date to get CDEC/Form 11 data
+function GetDataDate_Callback(hObject, eventdata, handles)
+global DataDateGlobal
+DataDateGlobal = get(hObject,'String');
+DataDateGlobal = floor(datenum(DataDateGlobal));
+floorNow = floor(now);
+if DataDateGlobal > floorNow
+    DataDateGlobal = datenum(floorNow);
+    set(handles.GetDataDate,'String',datestr(floorNow,'mm/dd/yyyy'))
+    
+    % % Message box to warn that start date has changed
+    msgTxt = 'Latest possible Data Date is today';
+    set(handles.progressText,'String',msgTxt);
+    drawnow;
+end
+
+% % Creates Data Date entry box - this is the date that module will look
+% back to for historic data
+function GetDataDate_CreateFcn(hObject, eventdata, handles)
+if ispc && isequal(get(hObject,'BackgroundColor'), get(0,'defaultUicontrolBackgroundColor'))
+    set(hObject,'BackgroundColor','white');
+end
+
+function HPHMaxBox_Callback(hObject, eventdata, handles)
+global HPH_Max
+HPH_Max = str2double(get(hObject,'String')); drawnow;
+
+% Create HPH Max Granite Tunnel Flow Box
+function HPHMaxBox_CreateFcn(hObject, eventdata, handles)
+global HPH_Max
+set(hObject,'String',HPH_Max);
+if ispc && isequal(get(hObject,'BackgroundColor'), get(0,'defaultUicontrolBackgroundColor'))
+    set(hObject,'BackgroundColor','white');
+end
+
+% get/set current Cherry Valve Release rate
+function ValveMachine_CreateFcn(hObject, eventdata, handles)
+global Valves_Curr
+set(hObject,'String',Valves_Curr);
+if ispc && isequal(get(hObject,'BackgroundColor'), get(0,'defaultUicontrolBackgroundColor'))
+    set(hObject,'BackgroundColor','white');
+end
+
+
+function ValveMachine_Callback(hObject, eventdata, handles)
+global Valves_Curr
+Valves_Curr = str2double(get(hObject,'String'));
+
+
+% get/set current HPH flow rate
+function HPHMachine_CreateFcn(hObject, eventdata, handles)
+global HPH_mean
+set(hObject,'String',round(HPH_mean));
+if ispc && isequal(get(hObject,'BackgroundColor'), get(0,'defaultUicontrolBackgroundColor'))
+    set(hObject,'BackgroundColor','white');
+end
+
+
+function HPHMachine_Callback(hObject, eventdata, handles)
+global HPH_mean
+HPH_mean = str2double(get(hObject,'String'));
+
+
+% % Allows user to change folder locations from defaults
+function ChangeFolders_Callback(hObject, eventdata, handles)
+global ChangeFolders
+ChangeFolders = get(hObject,'Value');
+
+% % Choose whether running in Moccasin. Some data is retrieved more quickly
+% while in Moccasin
+function MoccasinMachine_Callback(hObject, eventdata, handles)
+global UseForm11
+UseForm11 = get(hObject,'Value');
+
+% --- Executes on button press in InflowMachine.
+% checking this box will grab F11/CNRFC inflows and pin forecast
+function InflowMachine_Callback(hObject, eventdata, handles)
+global UseInflows
+UseInflows = get(hObject,'Value');  % returns toggle state of InflowMachine
+
+
+%Current Cherry Reservoir Storage
+function StorMachine_CreateFcn(hObject, eventdata, handles)
+global Stor_Curr
+set(hObject,'String',Stor_Curr);
+
+if ispc && isequal(get(hObject,'BackgroundColor'), get(0,'defaultUicontrolBackgroundColor'))
+    set(hObject,'BackgroundColor','white');
+end
+
+
+function StorMachine_Callback(hObject, eventdata, handles)
+global Stor_Curr
+Stor_Curr = str2double(get(hObject,'String'));
+
+
+function ValveMaxBox_Callback(hObject, eventdata, handles)
+global Valve_Max
+Valve_Max = str2double(get(hOjbect,'String'));
+
+% --- Executes during object creation, after setting all properties.
+function ValveMaxBox_CreateFcn(hObject, eventdata, handles)
+global Valve_Max
+set(hObject,'String',Valve_Max);
+if ispc && isequal(get(hObject,'BackgroundColor'), get(0,'defaultUicontrolBackgroundColor'))
+    set(hObject,'BackgroundColor','white');
+end
+
+% --- Executes during object creation, after setting all properties.
+function PumpMachine_CreateFcn(hObject, eventdata, handles)
+global chelPumps
+set(hObject,'String',chelPumps);
+if ispc && isequal(get(hObject,'BackgroundColor'), get(0,'defaultUicontrolBackgroundColor'))
+    set(hObject,'BackgroundColor','white');
+end
+
+% user enters Cherry-Eleanor Pumping Rates here
+function PumpMachine_Callback(hObject, eventdata, handles)
+global chelPumps
+chelPumps = str2double(get(hObject,'String'));   % returns input value for pumping rate
+
+
+
+% --- Executes on button press in AdjustSnowBtn.
+function AdjustSnowBtn_Callback(hObject, eventdata, handles)
+% hObject    handle to AdjustSnowBtn (see GCBO)
+% eventdata  reserved - to be defined in a future version of MATLAB
+% handles    structure with handles and user data (see GUIDATA)
+global AdjustSnow ASOFN ASODates ASOUseDates ASOSWE MP htbl
+guidata(hObject, handles);
+if AdjustSnow
+    set(handles.AdjustSnowBtn, 'ForegroundColor', 'k');
+    AdjustSnow = 0;
+    ASOSWE = [];
+    ASODates = [];
+    ASOUseDates = [];
+else
+    set(handles.AdjustSnowBtn, 'ForegroundColor', [0 .6 0]);
+    AdjustSnow = 1;
+    %    [num, txt, raw] = xlsread(ASOFN, 'HRU Inches');
+    ASO = readtable(ASOFN, 'Sheet', 'HRU Inches');
+    ASOSWE = ASO{:,2:end};
+    ASODates = datenum(ASO{:,1});
+%    ASODates(numel(ASOSWE(:,1))+1:end)=[];
+    [y,~,~] = datevec(now);
+    thisYear = ASODates >= datenum(y, 1, 1);    %   Only display this year's ASO dates
+    ASODates = ASODates(thisYear);
+    ASOSWE = ASOSWE(thisYear,:);
+    ASOUseDates = ASODates;
+    ASOUseDates(:) = 1;
+    
+    hASO = figure();
+    set(gca, 'Visible', 'off');
+    pos = [.4*MP(1,3) MP(1,2)+20 0.2*MP(1,3) 0.5*MP(1,4)];
+    set(hASO, 'Position', pos);
+    hold on;
+    htbl = uitable(hASO, 'Data', ASOUseDates, 'Position', [.1*pos(1,3), .05*pos(1,4), 300, 400], ...
+        'ColumnName', 'Use Date', 'RowName', datestr(ASODates, 'yyyy/mm/dd'), 'FontSize', 12, ...
+        'ColumnEditable', true, 'CellEditCallback', {@edit_callback});
+    hSelAll = uicontrol('Style','pushbutton','String','Sel All',...  %   Show/hide legend
+        'Position',[.05*pos(1,3), .85*pos(1,4) ,100, 40], 'FontSize', 14, 'BackgroundColor', [.80 .80 .80], 'Callback', @SelAll);
+    hClearAll = uicontrol('Style','pushbutton','String','Clear All',...  %   Show/hide legend
+        'Position',[.35*pos(1,3), .85*pos(1,4) ,100, 40], 'FontSize', 14, 'BackgroundColor', [.80 .80 .80], 'Callback', @ClearAll);
+    hSelMo = uicontrol('Style','pushbutton','String','Sel 1/Mo',...  %   Show/hide legend
+        'Position',[.65*pos(1,3), .85*pos(1,4) ,100, 40], 'FontSize', 14, 'BackgroundColor', [.80 .80 .80], 'Callback', @Sel1PerMo);
+end
+
+
+% % Select all ASO dates
+function SelAll(hObject, eventdata, handles)
+global ASOUseDates htbl
+%guidata(hObject, handles);
+ASOUseDates(:) = 1;
+set(htbl, 'Data', ASOUseDates);
+
+
+% % Clear all ASO dates
+function ClearAll(hObject, eventdata, handles)
+global ASOUseDates htbl
+%guidata(hObject, handles);
+ASOUseDates(:) = 0;
+set(htbl, 'Data', ASOUseDates);
+
+
+% % Select First ASO Date per Month
+function Sel1PerMo(hObject, eventdata, handles)
+global ASODates ASOUseDates htbl
+%guidata(hObject, handles);
+ASOUseDates(:) = 1;
+lastYearMo = datevec(ASODates(1));
+lastYearMo(3:end) = [];
+for i=2:numel(ASODates)
+    yearMo = datevec(ASODates(i));
+    yearMo(3:end) = [];
+    if yearMo == lastYearMo
+        ASOUseDates(i) = 0;
+    end
+    lastYearMo = yearMo;
+end
+set(htbl, 'Data', ASOUseDates);
+
+
+% Respond to table edits
+function edit_callback(hObject, eventdata, handles)
+global ASOUseDates
+sel = eventdata.Indices;    %   x, y indices of selected table cell
+ASOUseDates(sel(1,1)) = eventdata.NewData;
+
+
+
+% --- Executes on button press in DoPillows.
+function DoPillows_Callback(hObject, eventdata, handles)
+% hObject    handle to DoPillows (see GCBO)
+% eventdata  reserved - to be defined in a future version of MATLAB
+% handles    structure with handles and user data (see GUIDATA)
+global ModelPillows
+ModelPillows = get(hObject,'Value');
+
+
+% - function to generate 10-day precip matrix with storm appended and
+% scaled such that probabilistic mass balance violations are avoided
+function StormOut = StormMaker(StormSel, iDay, PrecipForecast)
+% precip forecast is M x N, where M = number of days and N = number of sites
+
+MaxStorm = [17.7  19.9  23.0  25.4  35.3  37.45]; % 100, 200, 500, 1k, design, pmp
+
+% % 100, 200, 500, 1000, Design and PMP return period precip total for 4 - 10 days
+    ReturnPeriods = [
+19.6	22.1	25.5	28.3	38.61	40.96
+20.9	23.53	27.13	30.07	40.89	43.38
+22.2	24.97	28.77	31.83	43.16	45.79
+23.5	26.4	30.4	33.6	45.64	48.42
+24.47	27.47	31.57	34.83	46.9	49.76
+25.43	28.54	32.73	36.07	48.39	51.34
+26.4	29.6	33.9	37.3	49.86	52.9];
+
+StormSeason = [0.5000  0.5000  0.5900  0.7100  1.0000  1.0000  1.0000  1.0000  1.0000  0.8300  0.6400  0.5500  0.5000  0.5000];
+StationCorrelations = [0.756850979	0.731722622	0.549752608	1	0.587208688	0.853877549	0.758695514	1.186721093	0.712865262];
+
+StormDist = [0.175976273
+    0.526445872
+    0.297577855];
+
+Storm = [7 17.7
+    8 17.7
+    9 20.8
+    10 25.1
+    11 35.3
+    12 35.3
+    1 35.3
+    2 35.3
+    3 35.3
+    4 29.3
+    5 22.6
+    6 19.4
+    7 17.7
+    8 17.7];
+
+Storm(1:6,1) = datenum(2008,Storm(1:6,1),15);
+Storm(7:14,1) = datenum(2009,Storm(7:14,1),15);
+Storm(:,2) = StormSeason*MaxStorm(StormSel);
+StormSize = interp1(Storm(:,1), Storm(:,2), datenum(2008,8,1):datenum(2009,7,31));
+StormFinal = StormSize(iDay);
+StormFinal = StormFinal.*StormDist;
+StormAppend = repmat(StormFinal,1,size(PrecipForecast,2)).*StationCorrelations;
+StormOut = [PrecipForecast; StormAppend];
+
+
+% % % Following code makes adjustments to StormOut to decrement 8-10day
+% storm size such that 4-10 day return period precip amounts are not
+% exceeded
+
+% get the cumulative storm sizes for the forecast + appended storm
+% reverse the order so that we're looking in terms of storm event size
+Scum = cumsum(StormOut(end:-1:1,:));            % cumulative storm sizes
+Scum = Scum(4:10,:);                            % truncate to days 4-10, since days 1-3 are fixed
+
+% build a matrix Crep of chosen return period size storms for days 4-10,
+% and scale according to Station Correlation array. The size of this matrix
+% will be identical to that of Scum, so that they can be differenced
+m = StormSize(iDay)/MaxStorm(StormSel);      % scale according to time of year
+Crep = m.*ReturnPeriods(:,StormSel).*StationCorrelations;   
+
+% calculate difference matrix and decrement storm if necessary
+% edit 11/08/2018, calc difference across final row, wo we're
+% decrementing the final, 10-day precip sum such that it does not exceed
+% the 10-day duration precip for the given return period
+SC_diff = Scum(end,:) - Crep(end,:); 
+
+if any(SC_diff>0)
+    
+    SC_inds = find(SC_diff>0);
+    
+    for i = 1:length(SC_inds)
+        % decrement storm for i'th station
+        StormFinal = StormSize(iDay)*StationCorrelations(SC_inds(i)) - SC_diff(SC_inds(i));
+        StormFinal = StormFinal.*StormDist;
+        StormOut(8:10,SC_inds(i)) = StormFinal;
+    end    
+    
+end
+
+
+
+function y = nanmean(x,dim)
+
+if isempty(x)
+	y = NaN;
+	return
+end
+
+if nargin < 2
+	dim = min(find(size(x)~=1));
+	if isempty(dim)
+		dim = 1;
+	end
+end
+
+% Replace NaNs with zeros.
+nans = isnan(x);
+x(isnan(x)) = 0; 
+
+% denominator
+count = size(x,dim) - sum(nans,dim);
+
+% Protect against a  all NaNs in one dimension
+i = find(count==0);
+count(i) = ones(size(i));
+
+y = sum(x,dim)./count;
+y(i) = i + NaN;
+
+
+% --- Executes during object creation, after setting all properties.
+function inflowPlot_CreateFcn(hObject, eventdata, handles)
+% hObject    handle to inflowPlot (see GCBO)
+% handles    empty - handles not created until after all CreateFcns called
+% Hint: place code in OpeningFcn to populate inflowPlot
+
+
+% --- Executes on button press in cb100yr.
+function cb100yr_Callback(hObject, eventdata, handles)
+global StormList
+StormList(1) = get(hObject,'Value');
+
+
+% --- Executes on button press in cb200yr.
+function cb200yr_Callback(hObject, eventdata, handles)
+global StormList
+StormList(2) = get(hObject,'Value');
+
+
+% --- Executes on button press in cb500yr.
+function cb500yr_Callback(hObject, eventdata, handles)
+global StormList
+StormList(3) = get(hObject,'Value');
+
+
+% --- Executes on button press in cb1000yr.
+function cb1000yr_Callback(hObject, eventdata, handles)
+global StormList
+StormList(4) = get(hObject,'Value');
+
+
+% --- Executes on button press in cbDesign.
+function cbDesign_Callback(hObject, eventdata, handles)
+global StormList
+StormList(5) = get(hObject,'Value');
+
+
+function o = dPad(i, d)
+o = i;
+if numel(o) < d
+    while numel(o) < d
+        o = ['0' o];
+    end
+end
