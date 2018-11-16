@@ -20,8 +20,6 @@ function varargout = PRMS_CherryFIO_v1(varargin)
 % hard-wired constraints: 0, 10 kcfs and 42kcfs respective to
 % aforementioned storm event sizes. 
 %
-% coded by: R. Walters, C. Graham and R. Picklum, Water & Power Planning,
-% HHWP, during September-October 2018.
 %
 % PRMS_CherryFIO_v1 MATLAB code for PRMS_CherryFIO_v1.fig
 %
