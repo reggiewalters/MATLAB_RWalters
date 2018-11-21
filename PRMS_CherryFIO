@@ -1,4 +1,4 @@
-function varargout = PRMS_CherryFIO_v1(varargin)
+function varargout = PRMS_CherryFIO_v2(varargin)
 %
 % Cherry Reservoir Forecast Informed Reservoir Operations Model
 % Water & Power Planning
@@ -20,8 +20,10 @@ function varargout = PRMS_CherryFIO_v1(varargin)
 % hard-wired constraints: 0, 10 kcfs and 42kcfs respective to
 % aforementioned storm event sizes. 
 %
+% coded by: R. Walters, C. Graham and R. Picklum, Water & Power Planning,
+% HHWP, during September-October 2018.
 %
-% PRMS_CherryFIO_v1 MATLAB code for PRMS_CherryFIO_v1.fig
+% PRMS_CherryFIO_v2 MATLAB code for PRMS_CherryFIO_v2.fig
 %
 % dependencies: HHWP \New_Folder_Structure\Tools\MATLAB directory in path
 
@@ -33,8 +35,8 @@ function varargout = PRMS_CherryFIO_v1(varargin)
 gui_Singleton = 1;
 gui_State = struct('gui_Name',       mfilename, ...
     'gui_Singleton',  gui_Singleton, ...
-    'gui_OpeningFcn', @PRMS_CherryFIO_v1_OpeningFcn, ...
-    'gui_OutputFcn',  @PRMS_CherryFIO_v1_OutputFcn, ...
+    'gui_OpeningFcn', @PRMS_CherryFIO_v2_OpeningFcn, ...
+    'gui_OutputFcn',  @PRMS_CherryFIO_v2_OutputFcn, ...
     'gui_LayoutFcn',  [] , ...
     'gui_Callback',   []);
 if nargin && ischar(varargin{1})
@@ -48,17 +50,17 @@ else
 end
 
 
-% % Executes just before PRMS_CherryFIO_v1 is made visible. Initializes variable
+% % Executes just before PRMS_CherryFIO_v2 is made visible. Initializes variable
 % and settings
-function PRMS_CherryFIO_v1_OpeningFcn(hObject, eventdata, handles, varargin)
+function PRMS_CherryFIO_v2_OpeningFcn(hObject, eventdata, handles, varargin)
 disp( '---------- gathering initial condition information - please wait -------------');
 % This function has no output args, see OutputFcn.
 % hObject    handle to figure
 % eventdata  reserved - to be defined in a future version of MATLAB
 % handles    structure with handles and user data (see GUIDATA)
-% varargin   command line arguments to PRMS_CherryFIO_v1 (see VARARGIN)
+% varargin   command line arguments to PRMS_CherryFIO_v2 (see VARARGIN)
 
-% Choose default command line output for PRMS_CherryFIO_v1
+% Choose default command line output for PRMS_CherryFIO_v2
 addpath('W:\Water\New_Folder_Structure\Tools\MATLAB');
 handles.output = hObject;
 set(handles.inflowPlot,'visible','off');
@@ -124,19 +126,29 @@ ti = find(t2 == floor(now));
 Valves_Curr = nanmean(Q_Ch(ti-(12*4):ti));  % last 12 hours
 
 % Wiski Data % % %
-ts_id = '7577042';          % HPH_Pwr_Draft_60.E
-[HPH_wiski, wTime] = get_Wiski_ts(ts_id,now-1, now);    
-ti = find(wTime == floor(now));
-% get average of midnight-to-midnight previous day's power draft
-HPH_mean = round(nanmean(HPH_wiski(1:ti)));
+try
+    ts_id = '7577042';          % HPH_Pwr_Draft_60.E
+    [HPH_wiski, wTime] = get_Wiski_ts(ts_id,now-1, now);
+    ti = find(wTime == floor(now));
+    % get average of midnight-to-midnight previous day's power draft
+    HPH_mean = round(nanmean(HPH_wiski(1:ti)));
+    
+    ts_id2 = '17856042';        % CHEL pumping F11.O ts
+    % get most recent Form11 pumping rate estimate rom Wiski database
+    pumps = get_Wiski_ts(ts_id2, now-3, now);
+    if any(pumps)
+        chelPumps = abs(pumps(end));
+    else
+        chelPumps = 0;
+    end
+    
+catch
+    HPH_wiski = inputdlg('unable to get HPH data from KiWIS, please enter estimate for HPH flow (CFS)');
+    HPH_mean = str2double(HPH_wiski);
+    
+    pumps = inputdlg('unable to get CHEL pumps data from KiWIS, please enter current pumping rate (CFS)');
+    chelPumps = str2double(pumps);
 
-ts_id2 = '17856042';        % CHEL pumping F11.O ts
-% get most recent Form11 pumping rate estimate rom Wiski database
-pumps = get_Wiski_ts(ts_id2, now-3, now);
-if any(pumps)
-    chelPumps = abs(pumps(end));
-else
-    chelPumps = 0;
 end
 
 % % Initialize global variables designating default locations of controls
@@ -224,7 +236,7 @@ end
 set(handles.GetDataDate,'String',datestr(DataDateGlobal,'mm/dd/yyyy'))
 
 
-function varargout = PRMS_CherryFIO_v1_OutputFcn(hObject, eventdata, handles)
+function varargout = PRMS_CherryFIO_v2_OutputFcn(hObject, eventdata, handles)
 varargout{1} = handles.output;
 pause(.05);
 
@@ -513,10 +525,16 @@ if StartGetData < min(EndDateGlobal, floor(now))
     
     try
         % Wiski Data % % %
-        ts_id = '7577042';      % HPH_Pwr_Draft_60.E
-        addpath('W:\Water\New_Folder_Structure\Tools\MATLAB');
-        [HPH_wiski, wTime] = get_Wiski_ts(ts_id,startDate, endDate);
-        
+        try
+            ts_id = '7577042';      % HPH_Pwr_Draft_60.E
+            addpath('W:\Water\New_Folder_Structure\Tools\MATLAB');
+            [HPH_wiski, wTime] = get_Wiski_ts(ts_id,startDate, endDate);
+        catch
+            if UseForm11
+                ts_id = '7577042';      % HPH_Pwr_Draft_60.E
+                [wTime, HPH_wiski] = Wiski_TSlistDBQuery(ts_id,startDate, endDate);
+            end
+        end
         
         % USGS data % % %
         siteNums = {'11277200' '11277300'};     % cherry lk & cherry cr blw res, respectively
@@ -684,6 +702,9 @@ if ShortTermForecastGlobal
             Forecast(:,6+tempInd(WS)) = maxT';
             Forecast(:,15+tempInd(WS)) = minT';
         end
+        
+        
+        
         if pcpInd(WS)      %    NWS table has variable number of days QPF
             if numel(pcps) >= 28
                 pcpVec = [sum(pcps(1:4)); sum(pcps(5:8)); sum(pcps(9:12)); sum(pcps(13:16)); ...
@@ -847,8 +868,8 @@ if ShortTermForecastGlobal
     three_day_sigma= nanstd(NEWINPUT(fi-3:fi-1, 7:24));
     
     for i = fi:14
-        randoms = 0.75.*three_day_sigma.*randn(1,18);
-        NEWINPUT(i, 7:24) = round(three_day_mean + randoms);
+        %randoms = 0.75.*three_day_sigma.*randn(1,18);
+        NEWINPUT(i, 7:24) = round(three_day_mean);
     end
     
     % % % Final New input data append here: % % % % % % % % %
@@ -1035,6 +1056,7 @@ if length(StormName) ~= length(StormList)
 end
 
 % initialize output CVM storm table:
+StormOut = NewInputData(fi:fi+9, end-8:end);% re-write StormOut in case edited (11/19/2018)
 StormOut = round(StormOut.*1e2)./1e2;       % round to .01"
 StormTableCVM(:,1) = [sum(StormOut(1:7,4)); StormOut(8:10,4)];
 
@@ -1158,10 +1180,10 @@ function RunModel_Callback(hObject, eventdata, handles)
 global RunESPGlobal UseForm11 AdjustSnow ASODates ASOUseDates ASOSWE StartDate UseInflows chelPumps
 global StartDateGlobal EndDateGlobal OutputVariablesGlobal MakeOutputPlots
 global batFN batFolder PRMSFN HetchyparamsFN CHELparamsFN controlFN OutputFolder InputFolder InputFNGlobal VarsFN
-global ModelCHEL ModelHetchy ModelLaGrange ModelPillows HetchyPRMS EleanorPRMS CherryPRMS
+global ModelCHEL ModelHetchy  ModelPillows HetchyPRMS EleanorPRMS CherryPRMS
 global   Other FIOExcelFile NewInputData FIODailyDir StormSel FIOFIOExcelFile 
 global PlotMapFiles nMapFiles mapFileNames SpecialCtrl SpecialCtrlFN saveEndVars nsubFN 
-global TIME  Delta_Ch  Q_Ch_hrly  HPH_wiski Ch_inflows StormList StormName FIOParentDir
+global TIME  Delta_Ch  Q_Ch_hrly  HPH_wiski Ch_inflows StormList StormName FIOParentDir pldata Inflows
 
 CheckFilesAndPaths; %   Confirm existence of directories and files, get new locations
 WSName = {'Hetchy'; 'CherryEleanor'; 'LaGrange'; 'Pillows'};
@@ -1284,6 +1306,7 @@ for q = 1:length(StormSel)+1
         drawnow; pause(.5);
     end
     
+    
     % % % Plot Obs/Mod Cherry Inflows
     if q<=length(StormSel)
         axes(handles.inflowPlot);   axis off;
@@ -1302,7 +1325,7 @@ for q = 1:length(StormSel)+1
         nX = [floor(now); floor(now)];
         nY = [0; 10*ceil(max(ch_inflow))];
         % run CG smoothing algorithm
-        ch_smooth = DailytoHourlyInterp(ch_inflow);
+        ch_smooth = DailytoHourlyInterp_v2(ch_inflow);
         dt_i      = linspace(dt(1),dt(end)+1,length(ch_smooth));
         hL(q) = plot(dt_i,ch_smooth,'b','linewidth',2);
         hold on;
@@ -1334,67 +1357,78 @@ for q = 1:length(StormSel)+1
         axis([floor(now)-3 dt_i(end) -500 ceil(max(ch_smooth))]);
         
     end
-    
-    
-    %%% make fig
-    if q<=length(StormSel)
-        figure(99);
-        [allOut, dt] = nsub_parse_2(nsubFN,2,0);
-        allQ   = allOut(:,:,1);
-        allSWE = allOut(:,:,2);
-        dt = datenum(dt);   ch_inflow = allQ(:,2);
-        if isempty(TIME)
-            d_start = find(dt == floor(now-3));
-        else
-            d_start = find(dt == floor(now));
-        end
-        dt = dt(d_start:end);
-        ch_inflow = ch_inflow(d_start:end);
-        nX = [floor(now); floor(now)];
-        nY = [0; 10*ceil(max(ch_inflow))];
-        % run CG smoothing algorithm
-        ch_smooth = DailytoHourlyInterp(ch_inflow);
-        dt_i      = linspace(dt(1),dt(end)+1,length(ch_smooth));
-        hL(q) = plot(dt_i,ch_smooth,'b','linewidth',2);
-        hold on;
-        
-        if q == length(StormSel)
-            
-            x1 = floor(now);    x2 = x1+7;
-            y1 = -500;          y2 = ceil(max(ch_smooth))+1e3;
-            X = [x1 x2 x2 x1];  Y = [y1 y1 y2 y2];
-            patch(X,Y,'b','faceAlpha',.08,'edgeColor','none');
-            x1 = x2;            x2 = x1+3;
-            X = [x1 x2 x2 x1];
-            patch(X,Y,'r','faceAlpha',.08,'edgeColor','none');
-            
-            if ~isempty(TIME)
-                tS = find(TIME == floor(now));
-                hp1=plot(TIME(1:tS),Ch_inflows(1:tS),'k-','lineWidth',2);
-                hp2=plot(nX,nY,'r--','linewidth',2);
-                lStr = [StormName(StormSel)' {'Q_o_b_s'} {'now'}];
-                legend([hL hp1 hp2],lStr);
-            else
-                hp = plot(nX,nY,'r--','linewidth',2);
-                lStr = [StormName(StormSel)' {'now'}];
-                legend([hL hp],lStr);
-            end
-        end
-        
-        set(gca,'XTick',dt(1)-3:1:dt(end));
-        ax = gca;
-        labels = string(datestr(dt(1)-3:dt(end),'mm/dd'));
-        ax.XAxis.TickLabels = labels;
-        ax.YRuler.Exponent = 0;
-        ylabel('cubic feet per second');      ytickformat('%,d');
-        title('PRMS Modeled Reservoir Inflows');
-        axis([floor(now)-3 dt_i(end) -50 ceil(max(ch_smooth))]);
-        grid on;
-        
-    end
-
     Inflows(:,q) = ch_inflow;
+    SWE(:,q)     = allSWE(:,2);
 end
+    
+% modeled inflows
+InflowMODEL = Inflows(:,1:3);
+
+% daily averaged observed inflows
+[InflowOBS,oT]   = downsample_ts(Ch_inflows(1:tS), TIME(1:tS), 'day');
+oT = floor(oT)-1;
+
+% merge obs and model
+allDAT = [repmat(InflowOBS',1,3); InflowMODEL];
+    
+EditPlot([oT; dt],allDAT,[],'flows','cfs',{'200' '500' 'design'},'tmp.m',[],[],[],floor(now()));
+Inflows = pldata(length(oT)+1:end,:);
+
+for q = 1:length(StormSel)
+    
+    figure(99);
+    ch_inflow = Inflows(:,q);
+    if isempty(TIME)
+        d_start = find(dt == floor(now-3));
+    else
+        d_start = find(dt == floor(now));
+    end
+    dt = dt(d_start:end);
+    ch_inflow = ch_inflow(d_start:end);
+       
+    nX = [floor(now); floor(now)];
+    nY = [0; 10*ceil(max(ch_inflow))];
+    % run CG smoothing algorithm
+    ch_smooth = DailytoHourlyInterp_v2(ch_inflow);
+    dt_i      = linspace(dt(1),dt(end)+1,length(ch_smooth));
+    hL(q) = plot(dt_i,ch_smooth,'b','linewidth',2);
+    hold on;
+    
+    if q == length(StormSel)
+        
+        x1 = floor(now);    x2 = x1+7;
+        y1 = -500;          y2 = ceil(max(ch_smooth))+1e3;
+        X = [x1 x2 x2 x1];  Y = [y1 y1 y2 y2];
+        patch(X,Y,'b','faceAlpha',.08,'edgeColor','none');
+        x1 = x2;            x2 = x1+3;
+        X = [x1 x2 x2 x1];
+        patch(X,Y,'r','faceAlpha',.08,'edgeColor','none');
+        
+        if ~isempty(TIME)
+            tS = find(TIME == floor(now));
+            hp1=plot(TIME(1:tS),Ch_inflows(1:tS),'k-','lineWidth',2);
+            hp2=plot(nX,nY,'r--','linewidth',2);
+            lStr = [StormName(StormSel)' {'Q_o_b_s'} {'now'}];
+            legend([hL hp1 hp2],lStr);
+        else
+            hp = plot(nX,nY,'r--','linewidth',2);
+            lStr = [StormName(StormSel)' {'now'}];
+            legend([hL hp],lStr);
+        end
+    end
+    
+    set(gca,'XTick',dt(1)-3:1:dt(end));
+    ax = gca;
+    labels = string(datestr(dt(1)-3:dt(end),'mm/dd'));
+    ax.XAxis.TickLabels = labels;
+    ax.YRuler.Exponent = 0;
+    ylabel('cubic feet per second');      ytickformat('%,d');
+    title('PRMS Modeled Reservoir Inflows');
+    axis([floor(now)-3 dt_i(end) -50 ceil(max(ch_smooth))]);
+    grid on;  
+    
+end
+
 
 % write prms modeled inflow data and storm/total volumes to xls
 iSheet = 'Inflows';
@@ -1435,6 +1469,9 @@ fN = [FIODailyDir '\Inflows+ModelRuns' '.jpg'];
 saveas(figure(99), fN);
 close(figure(99));
 
+figN = [FIODailyDir '\inflows.mat'];
+save(figN, 'Inflows');
+
 set(handles.progressText,'ForegroundColor','k')
 set(handles.progressText,'String', 'PRMS Simulation(s) Complete!');
 disp('Simulation(s) complete! Files written to:');
@@ -1450,7 +1487,7 @@ global TIME  Delta_Ch  Q_Ch_hrly  HPH_wiski Ch_inflows   FIOParentDir Ch_storage
 global InputFNGlobal  EndDateGlobal
 global FIODailyDir StormName StormList FIOExcelFile
 global chelPumps  StormSel
-global Valves_Curr HPH_mean Stor_Curr Valve_Max HPH_Max
+global Valves_Curr HPH_mean Stor_Curr Valve_Max HPH_Max Inflows
 
 if sum( StormSel==[2,3,5]) ~= 3
     progStr = 'Please select 200yr, 500yr, and Design Storm to run Ops Model';
@@ -1467,14 +1504,6 @@ drawnow;
 % gather inputs for FIRO module
 
 % get PRMS modeled inflows for 200, 500, and Design Ret. Per. storms
-% ***** EDIT THIS LATER to include adjusted inflows based on current obs
-
-storms = StormName(StormSel);
-for i = 1:length(storms)
-    fN = [FIODailyDir '\' storms{i} 'Output.out.nsub'];
-    D  = nsub_parse_2(fN, 2, 0);
-    Inflows(:,i) = D(end-13:end,2,1);
-end
 
 % specify maximum spill rates for the 3 chosen events (this might need to
 % be edited later, or made into a UI control input)
