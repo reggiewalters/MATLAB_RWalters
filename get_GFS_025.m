@@ -38,7 +38,7 @@
 %   additional calls to ncread.m which can add computing time.
 %
 %   EXAMPLE:
-% >> [Tmax, ~, Ptot, DT] = get_GFS_025(37.975, -119.916, 7);
+% >> [Tmax, ~, Ptot, DT] = get_GFS_025(37.975, -119.916);
 % >> plot(DT,Tmax, 'o-', 'lineWidth',2);    datetick('x','ddd');
 % >> grid on;   set(gca,'fontSize',14); ylabel('T_a [\circF]');
 % retrieves and plots forecasted daily maximum air temperature and 
