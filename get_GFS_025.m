@@ -45,7 +45,6 @@
 % accumulated precip for the GFS 1/4-deg grid cell containing the Cherry 
 % Valley Met (CVM) weather station 
 %
-% updated Nov 26 2018
 %
 function [Tmax,Tmin,Ptot,DT, T_air, Precip, time] = get_GFS_025(T_Lat, T_Lon, varargin)
 
@@ -107,6 +106,8 @@ while stop_flag == 0
         return                
     end
 end
+T_utc = datevec(time + T_offset);    % save utc time vector
+hrs   = T_utc(:,4);
 
 % build lat/lon arrays (always identical, no need to download)
 lat = -90: 0.25 : 90;   lon = 0: 0.25 : 360-0.25;
@@ -160,7 +161,14 @@ for i = 1:length(input_LatP)
     dLat = abs(Lat - input_LatP(i));    dLon = abs(Lon - input_LonT(i));
     Ri = find(dLat==min(dLat));         Ci = find(dLon==min(dLon));
     p =PPt(Ri,Ci,:);
-    Precip(:,i) = p(:);
+    p = p(:);
+    % every hr divisible by 6 is accum. precip for t-6, whereas hrs
+    % divisible by 3 (but not 6) are for t-3. difference such that all
+    % points are scaled to t-3 accumulation periods:
+    for q = 3:2:length(hrs)
+        p(q) = p(q) - p(q-1);
+    end
+    Precip(:,i) = p;
 end
 
 dfX = diff(fx_hrs);
@@ -180,4 +188,3 @@ for i = fullD1:length(da_inds)-1
     DT      = [DT; datenum([y m d 12 0 0])];    % forecast day
 end
 end
-    
