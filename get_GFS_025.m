@@ -45,6 +45,8 @@
 % accumulated precip for the GFS 1/4-deg grid cell containing the Cherry 
 % Valley Met (CVM) weather station 
 %
+% updated Nov 26 2018
+%
 function [Tmax,Tmin,Ptot,DT, T_air, Precip, time] = get_GFS_025(T_Lat, T_Lon, varargin)
 
 % set time offset, dependent upon timezone/DST
