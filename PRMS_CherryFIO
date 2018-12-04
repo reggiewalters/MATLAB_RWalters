@@ -5,29 +5,26 @@ function varargout = PRMS_CherryFIO_v2(varargin)
 % Hetch Hetchy Water & Power
 % November 2018
 %
-% This model is designed to extract weather forecast information from NWS
-% Western Region Headquarters along with GFS model runs in a region in
-% California encompassing the headwaters of the Tuolumne River, Eleanor
-% Creek, and Cherry Creek. Specifically, the model forecasts runoff into
+% This model is designed to generate forecasts of runoff runoff into
 % Cherry Reservoir, part of the Hetch Hetchy Regional Water System, under
 % large storm scenarios. These storms include 200-year, 500-year and
 % "design" storm precipitation events at Cherry Valley Met Station and
 % distributed according to historical regressions and internal model
 % hypsometry routines. The storms are synthetically appended to days 8, 9 
-% and 10 of the forecast. An operational model with user-defined constraints
-% to powerhouse and valve releases calculates spill rates and predicts an
-% operational strategy that keeps forecasted spill below a set of
-% hard-wired constraints: 0, 10 kcfs and 42kcfs respective to
-% aforementioned storm event sizes. 
+% and 10 of a deterministic weather forecast. An operational model with 
+% user-defined constraints to powerhouse and valve releases calculates 
+% spill rates and prescribes an operational strategy that keeps forecasted
+% spill below a set of hard-wired constraints: 0, 10 kcfs and 42kcfs 
+% respective to the aforementioned storm event sizes. 
 %
-% coded by: R. Walters, C. Graham and R. Picklum, Water & Power Planning,
+% coded by: R. Walters, R. Picklum, C. Graham Water & Power Planning,
 % HHWP, during September-October 2018.
 %
 % PRMS_CherryFIO_v2 MATLAB code for PRMS_CherryFIO_v2.fig
 %
 % dependencies: HHWP \New_Folder_Structure\Tools\MATLAB directory in path
 
-% Last Modified by R Walters 15-Nov-2018 
+% Last Modified by R Walters 03-Dec-2018 
 
 % % % % % % % % % % % % % % % % % % % % % % % % % % % % % % % % % % % % % %
 
@@ -75,7 +72,8 @@ MP = get(0, 'MonitorPositions');
 
 % % Initialize global variables controlling what types of runs and where to
 % get data
-global RunESPGlobal UseForm11
+global RunESPGlobal UseForm11 tempChange
+tempChange = 0;
 UseForm11 = 0;
 RunESPGlobal = 0;
 
@@ -535,56 +533,36 @@ if StartGetData < min(EndDateGlobal, floor(now))
                 [wTime, HPH_wiski] = Wiski_TSlistDBQuery(ts_id,startDate, endDate);
             end
         end
+        HPH_wiski (HPH_wiski<0) = 0;
         
         % USGS data % % %
         siteNums = {'11277200' '11277300'};     % cherry lk & cherry cr blw res, respectively
         [z_ch,~,t1] = get_USGS(siteNums{1}, startDate-1, endDate);
         [~, Q_Ch, t2] = get_USGS(siteNums{2}, startDate-1, endDate);
         
-        % filter reservoir elevation data for noise
-        windowSize = 8;
-        b = (1/windowSize)*ones(1,windowSize);
-        elev = filter(b, 1, z_ch);
-        tS = find(t1 == startDate);
-        t1 = t1(tS:end);    z_ch = z_ch(tS:end);    elev = elev(tS:end);
-        tS = find(t2 == startDate);
-        t2 = t2(tS:end);    Q_Ch = Q_Ch(tS:end);
+        Time_Vec = startDate:1/24:floor(endDate);   % template time array
         
+        % align all arrays:
+        HPH_wiski = interp1(wTime,HPH_wiski,Time_Vec);
+        elev      = interp1(t1,z_ch,Time_Vec);
+        Q_Ch_hrly = interp1(t2,Q_Ch,Time_Vec);       
         Ch_storage = CherryStorage(elev);
         
         % calculate hourly difference
-        Delta_Ch = diff(Ch_storage(1:4:end)).*12.1; % (12.1: ac-ft/hr to cfs)
-        t1 = t1(1:4:end);   t1 = t1(1:end-1);
+        Delta_Ch = diff(Ch_storage).*12.1; % (12.1: ac-ft/hr to cfs)
+        Delta_Ch = [0; Delta_Ch];
         
-        % use downsample fcn to aggregate to hourly average flow
-        [Q_Ch_hrly, t2] = downsample_ts(Q_Ch, t2, 'hour');
-        
-        t_ends = [t1(end) t2(end) wTime(end)];
-        tMin   = min(t_ends);
-        
-        binT = t_ends == min(t_ends);
-        if binT(3) == 1
-            tDiff = abs(wTime-tMin);
-        else
-            tDiff = abs(t1 - tMin);
-        end
-        
-        tS = find(tDiff == min(tDiff));
-        
-        TIME = t1(1:tS);
-        
-        % in some cases, TIME vector ends up with off-hour stamps
-        % (e.g., 14:30) resulting from small data gaps in USGS pull
-        % here, make them all fall on the hour
-        dV = datevec(TIME); dV(:,5) = 0;    TIME = datenum(dV);
-        
-        Delta_Ch   = Delta_Ch(1:tS);
-        Q_Ch_hrly  = Q_Ch_hrly(1:tS);
-        HPH_wiski  = HPH_wiski(1:tS);
         Pump_vec   = chelPumps.*ones(length(HPH_wiski),1);
         
         % inflow = delta_Storage + HPH + Ch_stream
-        Ch_inflows = Delta_Ch + HPH_wiski + Q_Ch_hrly' - Pump_vec;
+        Ch_inflows = Delta_Ch + HPH_wiski' + Q_Ch_hrly' - Pump_vec;
+        
+        % smooth inflows slightly with rational transfer filter
+        wSize = 4;  
+        b = (1/wSize)*ones(1,wSize);
+        Ch_inflows = filter(b, 1, Ch_inflows);
+        
+        TIME = Time_Vec;
         
         set(handles.progressText,'String','Finished with inflow calculations');
         drawnow;    pause(1.0);
@@ -678,17 +656,31 @@ if ShortTermForecastGlobal
         
         s = urlread(theURL);
         dta = strfind(s, 'Daily-Temp');     %   Find Daily Temp line of NWS table
-        sdt = s(dta:dta+2000);
-        temps = cellfun(@str2double, regexp(sdt, '\d{2,3}', 'match'));
-        days = floor(now()):floor(now())+6;
-        if strfind(sdt, '--')  % Is first min temp missing?
-            maxT = temps([1 2 4 6 8 10 12]);
-            minT = [NaN temps([3 5 7 9 11 13])];
-        else
-            maxT = temps([1 3 5 7 9 11 13]);
-            minT = temps([2 4 6 8 10 12 14]);
-        end
+        sdt = s(dta:dta+1200);
+        inds = strfind(sdt,'<strong>');     % temps are bold-faced in sdt
         
+        for i = 1:length(inds)
+            ss = sdt(inds(i)+1:inds(i)+15);
+            si = strfind(ss,'>');   se = strfind(ss,'<');
+            si = si(1) + 1;         se = se(1) - 1;
+            cT = str2double(ss(si:se));
+            if cT < -100 cT = NaN;  end
+            temps(i) = cT;
+        end
+%         
+%         temps = cellfun(@str2double, regexp(sdt, '\d{2,3}', 'match'));
+%         days = floor(now()):floor(now())+6;
+%         if strfind(sdt, '--')  % Is first min temp missing?
+%             maxT = temps([1 2 4 6 8 10 12]);
+%             minT = [NaN temps([3 5 7 9 11 13])];
+%         else
+%             maxT = temps([1 3 5 7 9 11 13]);
+%             minT = temps([2 4 6 8 10 12 14]);
+%         end
+        maxT = temps([1 3 5 7 9 11 13]);
+        minT = temps([2 4 6 8 10 12 14]);
+        days = floor(now()):floor(now())+6;
+
         dpa = strfind(s, 'Precip');     %   Find Precip line
         sdp = s(dpa(4):dpa(4)+4000);
         pcps = regexp(sdp, '\d.\d{2}', 'match');
@@ -875,7 +867,6 @@ if ShortTermForecastGlobal
     % % % Final New input data append here: % % % % % % % % %
     fi = find(NewInputData(:,3) == cday);
     NewInputData = [NewInputData(1:fi-1,:); NEWINPUT];
-
     
 else
     % If no forecast, don't try to calc past today!
@@ -1183,7 +1174,7 @@ global batFN batFolder PRMSFN HetchyparamsFN CHELparamsFN controlFN OutputFolder
 global ModelCHEL ModelHetchy  ModelPillows HetchyPRMS EleanorPRMS CherryPRMS
 global   Other FIOExcelFile NewInputData FIODailyDir StormSel FIOFIOExcelFile 
 global PlotMapFiles nMapFiles mapFileNames SpecialCtrl SpecialCtrlFN saveEndVars nsubFN 
-global TIME  Delta_Ch  Q_Ch_hrly  HPH_wiski Ch_inflows StormList StormName FIOParentDir pldata Inflows
+global TIME  Delta_Ch  Q_Ch_hrly  HPH_wiski Ch_inflows StormList StormName FIOParentDir pldata Inflows tempChange
 
 CheckFilesAndPaths; %   Confirm existence of directories and files, get new locations
 WSName = {'Hetchy'; 'CherryEleanor'; 'LaGrange'; 'Pillows'};
@@ -1208,6 +1199,9 @@ HHParams = regexp(fileread(CHELparamsFN), '\n', 'split');
 
 targVars = {'climateflow' 'Pkwater_equiv'}; %   module and name of variable to sub with ASO data
 
+% clear inflow plot 
+axes(handles.inflowPlot);   
+cla reset;
 
 %   Main Calculation Loop: Run through the list of selected storms
 for q = 1:length(StormSel)+1
@@ -1262,6 +1256,45 @@ for q = 1:length(StormSel)+1
         return
     end
     
+    % add tempChange variable to all temperatures in the input file:
+    inStr = fileread(cFileStr);
+    tC = datevec(floor(now));
+    tCstr = [num2str(tC(1)) ' ' num2str(tC(2)) ' ' num2str(tC(3)) ' 0 0 0 '];
+    iOfs = strfind(inStr, tCstr);
+    preStr  = inStr(1:iOfs-1);
+    postStr = inStr(iOfs:end);
+    A = regexp(postStr, '\n', 'split'); A = A(1:14);
+    C = regexp(inStr, '\n', 'split');
+    
+    for p = 1:14
+        B = strsplit(A{p});
+        fXdate = datenum(str2double(B(1:6)));
+        B = B(1:end-1);
+        fX(p,:) = str2double(B);
+    end
+    for i = 1:size(fX,1)
+        fx_D = fX(i,:);
+        fx_D(7:24) = fx_D(7:24) + tempChange;
+        temp3 = num2str(fx_D(1,1));
+        
+        for j = 2:size(fx_D,2)
+            temp3 = [temp3 ' ' num2str(fx_D(j))];
+        end
+        
+        temp3 = [temp3 '\r'];
+        Temp{i} = sprintf(temp3);
+    end
+    
+    % reallocate A to variable with prms input file text up thru current day
+    A = regexp(preStr, '\n', 'split');
+    
+    B = [A(1:end-1) Temp];
+    
+    fid = fopen(cFileStr, 'w');
+    
+    fprintf(fid, '%s\n', B{:});
+    fclose(fid);
+    
     % copy the current file name back to the standard input directory
     % (this is the input data called by the PRMS control file)
     copyfile(cFileStr, InputFNGlobal);
@@ -1269,6 +1302,12 @@ for q = 1:length(StormSel)+1
     % % % Run PRMS %%%% %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
     RunModelNoEsp(StormNo, handles);
     %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+    
+    % re-write file without tempChange added
+    fid = fopen(cFileStr, 'w');
+    fprintf(fid, '%s\n', C{:});
+    fclose(fid);
+    copyfile(cFileStr, InputFNGlobal);
     
     % copy the .nsub output file to the output directory
     s1 = strfind(nsubFN, '\');
@@ -1332,7 +1371,11 @@ for q = 1:length(StormSel)+1
         
         if q == length(StormSel)
             if ~isempty(TIME)
+                tdiff = abs(floor(now) - TIME);
                 tS = find(TIME == floor(now));
+                if isempty(tS)
+                    tS = find(tdiff == min(tdiff));
+                end
                 plot(TIME(1:tS),Ch_inflows(1:tS),'k-','lineWidth',2);
                 plot(nX,nY,'r--','linewidth',2);
                 lStr = [StormName(StormSel)' {'Q_o_b_s'} {'now'}];
@@ -1371,11 +1414,10 @@ oT = floor(oT)-1;
 % merge obs and model
 allDAT = [repmat(InflowOBS',1,3); InflowMODEL];
     
-EditPlot([oT; dt],allDAT,[],'flows','cfs',{'200' '500' 'design'},'tmp.m',[],[],[],floor(now()));
+EditPlot([oT'; dt],allDAT,[],'flows','cfs',{'200' '500' 'design'},'tmp.m',[],[],[],floor(now()));
 Inflows = pldata(length(oT)+1:end,:);
 
 for q = 1:length(StormSel)
-    
     figure(99);
     ch_inflow = Inflows(:,q);
     if isempty(TIME)
@@ -1406,6 +1448,9 @@ for q = 1:length(StormSel)
         
         if ~isempty(TIME)
             tS = find(TIME == floor(now));
+            if isempty(tS)
+                tS = find(tdiff == min(tdiff));
+            end
             hp1=plot(TIME(1:tS),Ch_inflows(1:tS),'k-','lineWidth',2);
             hp2=plot(nX,nY,'r--','linewidth',2);
             lStr = [StormName(StormSel)' {'Q_o_b_s'} {'now'}];
@@ -1425,7 +1470,7 @@ for q = 1:length(StormSel)
     ylabel('cubic feet per second');      ytickformat('%,d');
     title('PRMS Modeled Reservoir Inflows');
     axis([floor(now)-3 dt_i(end) -50 ceil(max(ch_smooth))]);
-    grid on;  
+    grid on;
     
 end
 
@@ -1963,7 +2008,6 @@ if any(SC_diff>0)
 end
 
 
-
 function y = nanmean(x,dim)
 
 if isempty(x)
@@ -2036,4 +2080,16 @@ if numel(o) < d
     while numel(o) < d
         o = ['0' o];
     end
+end
+
+
+function warmingBox_Callback(hObject, eventdata, handles)
+global tempChange
+tempChange = str2double(get(hObject,'String'));
+
+
+% --- Executes during object creation, after setting all properties.
+function warmingBox_CreateFcn(hObject, eventdata, handles)
+if ispc && isequal(get(hObject,'BackgroundColor'), get(0,'defaultUicontrolBackgroundColor'))
+    set(hObject,'BackgroundColor','white');
 end
