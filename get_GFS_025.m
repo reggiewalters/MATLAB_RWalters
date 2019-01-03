@@ -8,6 +8,7 @@
 % forecasted 0.25 grid cell point for which it is the nearest neighbor.
 % R. Walters, HHWP, Sept 2018
 % Updated September 4, 2018 to include variable argument input
+% Updated Dec 2019 to accommodate https secure OPeNDAP transition
 % \\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\
 % *NOTE: User time zone is hard-wired and must be edited when using outside
 %  of Pacific Time Zone (line 51)
@@ -83,10 +84,10 @@ date = datestr(now,'yyyymmdd');
 stop_flag = 0;          R = '06';   % 06Z forecast        
                              
 % set path to GFS 1/4deg model
-fullpath = ['http://nomads.ncep.noaa.gov/dods/gfs_0p25/gfs',date,'/gfs_0p25_',R,'z'];
+fullpath = ['https://nomads.ncep.noaa.gov/dods/gfs_0p25/gfs',date,'/gfs_0p25_',R,'z'];
 
 % % %
-wait_Time = 5;              % time to wait btwn ncep fetch attempts 
+wait_Time = 2.5;              % time to wait btwn ncep fetch attempts 
 max_attempts = 10;          % max # of attempts
 n=0;
 while stop_flag == 0
