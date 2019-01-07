@@ -4,9 +4,7 @@
 %
 % The function receives a lat/lon pair as input and retrieves the
 % forecasted 0.25 grid cell point for which it is the nearest neighbor.
-% R. Walters, HHWP, Sept 2018
-% Updated September 4, 2018 to include variable argument input
-% Updated Dec 2019 to accommodate https secure OPeNDAP transition
+% R. Walters, HHWP, Jan 2019
 % \\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\
 % *NOTE: User time zone is hard-wired and must be edited when using outside
 %  of Pacific Time Zone (line 51)
