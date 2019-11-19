@@ -3,7 +3,7 @@
 % identically-sized ensemble of corresponding historical observations (Y)
 % for the same or very similar day(s) of year.
 % Input dimensions are [M x N], where M = number of ensemble members and 
-% N = forecast days.
+% N = forecast days (or ensemble #s).
 % R. Walters, HHWP, Nov 2019
 %
 % Clark, M. P., S. Gangopadhyay, L. E. Hay, B. Rajagopalan, and R. L. Wilby, 2004: 
