@@ -9,7 +9,7 @@
 %   >> load_Snotel(state_name, site_num, prec_or_swe)
 %
 %%% INPUTS: 
-%   'state_name': two-letter (all caps) state abbreviation in single quotes
+%   'state_name': two-letter state abbreviation in single quotes
 %
 %  'site_num': integer site number for the SNOTEL location of interest
 %
@@ -35,24 +35,20 @@
 %
 
 function [DM,st_yr,end_yr,n_yrs] = load_Snotel(state_name, site_num, prec_or_swe)
-
+opts = weboptions;
+opts.CertificateFilename = '';
 % switch for precip or SWE - go to the appropriate NRCS URL and download.
 % prec_or_swe == 0 for precip and == 1 for snow water equivalent
 if prec_or_swe == 0
     furl = ['https://wcc.sc.egov.usda.gov/reportGenerator/view_csv/customSingleStationReport/daily/',num2str(site_num),':',state_name,':SNTL%7Cid=%22%22%7Cname/POR_BEGIN,POR_END/PREC::value'];
-    file_name = 'temp.csv';
-    urlwrite(furl,file_name);
+    s = webread(furl,opts);
 elseif prec_or_swe == 1
     furl = ['https://wcc.sc.egov.usda.gov/reportGenerator/view_csv/customSingleStationReport/daily/',num2str(site_num),':',state_name,':SNTL%7Cid=%22%22%7Cname/POR_BEGIN,POR_END/WTEQ::value'];
-    file_name = 'temp.csv';
-    urlwrite(furl,file_name);
+    s = webread(furl,opts);
 end
 
-% read the temp.csv file
-fid = fopen(file_name);
-M = textscan(fid,'%s %s','Delimiter',',','EmptyValue',NaN);
-fclose(fid);
-delete(file_name);
+% read s
+M = textscan(s,'%s %s','Delimiter',',','EmptyValue',NaN);
 
 % parse into separate columns (date and data)
 c1 = M{1};  c2 = M{2};
@@ -105,3 +101,4 @@ DM(1:length(d_end),end) = d_end;
 
 % truncate DM to 365 rows if it happens to be larger
 DM = DM(1:365,:);
+
