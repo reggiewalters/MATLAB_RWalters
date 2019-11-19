@@ -11,7 +11,7 @@ function X_ss = Schaake_Shuffle(X, Y)
 % % % Sort forecast input array X
 Chi = sort(X);
 
-% % % Sort observed input aray Y and get index vector B
+% % % Sort observed input array Y and get index vector B
 [~, B] = sort(Y);
 
 % % % Perform Schaake Shuffle for the re-ordered array of forecast ensemble
