@@ -35,7 +35,7 @@
 %       current, potentially incomplete water year.
 %
 %%% EXAMPLE:
-% >> [Data] = load_Snotel('ID',324);
+% >> [Data] = Snotel_CSV('ID',324);
 %    gives Period of Record output in matrix form for Bear Saddle, ID SWE
 %    and writes a .csv file to the current working directory.
 %
@@ -48,14 +48,23 @@ function Data = Snotel_CSV(state_name, site_num)
 % Go to the appropriate NRCS URL and download precip:
 
 furl = ['https://wcc.sc.egov.usda.gov/reportGenerator/view_csv/customSingleStationReport/daily/',num2str(site_num),':',state_name,':SNTL%7Cid=%22%22%7Cname/POR_BEGIN,POR_END/PREC::value'];
-file_name = 'temp.csv';
-urlwrite(furl,file_name);
+n = 0;  sF = 0;
+while sF == 0
+    try
+        s=webread(furl,weboptions('CertificateFilename',''));
+        sF = 1;
+    catch
+        n = n+1;
+        if n>5
+            sF = 1;
+        end
+        pause(0.5);
+    end
+end
+            
 
 % read the temp.csv file
-fid = fopen(file_name);
-M = textscan(fid,'%s %s','Delimiter',',','EmptyValue',NaN);
-fclose(fid);
-delete(file_name);
+M = textscan(s,'%s %s','Delimiter',',','EmptyValue',NaN);
 
 % print status
 fprintf('Formatting Precipitation Data\n');
@@ -156,14 +165,22 @@ clearvars -except Data site_num state_name Headers hStop;
 
 % Go to the appropriate NRCS URL and download SWE:
 furl = ['https://wcc.sc.egov.usda.gov/reportGenerator/view_csv/customSingleStationReport/daily/',num2str(site_num),':',state_name,':SNTL%7Cid=%22%22%7Cname/POR_BEGIN,POR_END/WTEQ::value'];
-file_name = 'temp.csv';
-urlwrite(furl,file_name);
+n = 0;  sF = 0;
+while sF == 0
+    try
+        s=webread(furl,weboptions('CertificateFilename',''));
+        sF = 1;
+    catch
+        n = n+1;
+        if n>5
+            sF = 1;
+        end
+        pause(0.5);
+    end
+end
 
 % read the temp.csv file
-fid = fopen(file_name);
-M = textscan(fid,'%s %s','Delimiter',',','EmptyValue',NaN);
-fclose(fid);
-delete(file_name);
+M = textscan(s,'%s %s','Delimiter',',','EmptyValue',NaN);
 
 % print status
 fprintf('Formatting Snow Water Equivalent Data\n');
