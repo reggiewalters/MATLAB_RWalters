@@ -8,6 +8,9 @@
 % Updated Sept 6 2018 to account for additional CDEC changes
 % Updated Sept 26 2018 to accommodate additional CDEC changes
 % Updated Oct 9 2018 to accommodate additional CDEC changes
+% Updated Aug 23 2019 to add error trap for irregular data streams
+% Updated Nov 6 2019 to include variable arg input to turn on/off error
+%                    string display to command line
 %
 %
 %%% USAGE:
@@ -34,10 +37,16 @@
 % gets event (15-minute) air temperature for the Moccasin Met Station from
 % the beginning of WY 2018 through the most current available entry
 
-function [Data, date] = get_CDEC(station_ID, dur_code, sensor_Num, StartDate, EndDate)
+function [Data, date] = get_CDEC(station_ID, dur_code, sensor_Num, StartDate, EndDate, varargin)
 % grabs cdec data and fills missing data with NaN values
 % r. walters, hetch hetchy water and power, july 2018
 % all inputs in single quotes. use 'now' for EndDate to run thru current
+%
+if ~isempty(varargin)
+    dispFlag = 1;
+else
+    dispFlag = 0;
+end
 
 floorNow = floor(now);
 if isnumeric(EndDate)
@@ -47,12 +56,12 @@ if isnumeric(EndDate)
 end
 
 if  ( strncmpi('now', EndDate, 3) ) == 1
-    furl = ['http://cdec.water.ca.gov/dynamicapp/req/CSVDataServlet?Stations=', ...
+    furl = ['https://cdec.water.ca.gov/dynamicapp/req/CSVDataServlet?Stations=', ...
         station_ID,'&SensorNums=',sensor_Num,'&dur_code=',dur_code, ...
         '&Start=',datestr(StartDate,'yyyy-mm-dd'), ...
         '&end_date=Now'];   
 else
-    furl = ['http://cdec.water.ca.gov/dynamicapp/req/CSVDataServlet?Stations=', ...
+    furl = ['https://cdec.water.ca.gov/dynamicapp/req/CSVDataServlet?Stations=', ...
         station_ID,'&SensorNums=',sensor_Num,'&dur_code=',dur_code, ...
         '&Start=',datestr(StartDate,'yyyy-mm-dd'), ...
         '&end_date=',datestr(EndDate,'yyyy-mm-dd')];
@@ -61,14 +70,18 @@ end
 catch_str = ['**cannot find cdec vars with specified parameters** \n', ...
         '**please check syntax or try again later** \n'];
 try
-    s = webread(furl);
+    s = webread(furl, weboptions('CertificateFilename',''));
 catch
-    fprintf(catch_str)
+    if dispFlag == 1
+        fprintf(catch_str)
+    end
     return
 end
 
 if length(s) < 100
-    fprintf(catch_str)
+    if dispFlag == 1
+        fprintf(catch_str)
+    end
     return
 end
 
@@ -76,8 +89,9 @@ A = textscan(s,'%s %s %d %s %s %s %s %s %s','headerlines',1,'Delimiter',',');
 nT = length(A{1});
 
 dCell = ([A{5}]);          dMat = cell2mat(dCell);
-date  = datenum(dMat,'yyyymmddHHMM');            
+date  = datenum(dMat,'yyyymmddHHMM');
+dInd = ~cellfun(@isempty,dCell);
 
 Data = str2double(A{7});
-
+Data = Data(dInd);
 Data(Data<-100) = NaN;
