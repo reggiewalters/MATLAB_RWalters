@@ -86,7 +86,7 @@ if isempty(varargin)
     
     % % %
     wait_Time = 2.5;              % time to wait btwn ncep fetch attempts
-    max_attempts = 10;          % max # of attempts
+    max_attempts = 10;            % max # of attempts
     n=0;
     while stop_flag == 0
         n=n+1;
