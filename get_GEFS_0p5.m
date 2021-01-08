@@ -5,7 +5,7 @@
 % full day for the current day's forecast (assuming that the UTC offset is
 % at least 6 hours - an ok assumption for Pacific/Mountain Time Zones).
 % The function receives a lat/lon pair as input and retrieves the
-% forecasted 1.0 deg grid cell point for which it is the nearest neighbor.
+% forecasted 0.5-deg grid cell point for which it is the nearest neighbor.
 % User can alternatively enter a UTC date-time
 % R. Walters, HHWP, Sept 2020
 %
