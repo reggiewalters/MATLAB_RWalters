@@ -103,12 +103,6 @@ if isempty(varargin)
             %             lat  = ncread(fullpath, 'lat', 1, inf);
             %             lon  = ncread(fullpath, 'lon', 1, inf);
             time = time + 365;
-%             dV = datevec(time);
-%             dV(:,1) = dV(:,1) + 1;
-%             t = datenum(dV);
-%             delta_t = mode(diff(t));
-%             t = t(1) : delta_t : t(end);
-%             time = t(1:length(time));
             disp(['forecast found!  ::::  ' datestr(time(1)+T_offset, 'mm/dd/yyyy HH:MM') ' UTC']);
             stop_flag = 1;
         catch
@@ -133,12 +127,7 @@ else
         try
             fullpath = ['http://nomads.ncep.noaa.gov/dods/gefs/gefs' date '/gefs_pgrb2ap5_all_' Run 'z'];
             time = ncread(fullpath,'time',1,inf) - T_offset;
-            %             lat  = ncread(fullpath, 'lat', 1, inf);
-            %             lon  = ncread(fullpath, 'lon', 1, inf);
             time = time + 365;
-%             dV = datevec(time);
-%             dV(:,1) = dV(:,1) + 1;
-%             time = datenum(dV);
             stop_flag = 1;
             valid_str = ['forecast found! valid ' R 'Z ' datestr(datenum(date,'yyyymmdd'))];
             disp(valid_str);
@@ -149,6 +138,7 @@ else
             disp(['unable to find GEFS forecast for ' R 'Z!']);
             return
         end
+        
     end
     
 end
@@ -183,16 +173,6 @@ while n < 10
     nEns = 31;              % GEFS v12.0 -> 31 members 
     nTs  = 65;              % 65 timesteps (6h/ea)
     try
-%         Ppt = ncread(fullpath, 'apcpsfc', [iLon iLat 1 1], [latN lonN nTs nEns]);
-%         Ppt = Ppt./25.4;                % convert kgm^-2 to in.
-%         Ppt = permute(Ppt, [2,1,3,4]);  % permute to row(lat) x column(lon)
-%         
-%         disp('... got precip ...');
-%         pause(0.2);
-%         
-%         Ta = ncread(fullpath, 'tmp2m', [iLon iLat 1 1], [latN lonN nTs nEns]);
-%         Ta = (Ta-273.15).*9./5+32;      % convert from K to F
-%         Ta = permute(Ta, [2,1,3,4]);    % same permutation as above
         ds  = ncgeodataset(fullpath);
         
         Ppt = ds.data('apcpsfc', [1 1 iLat iLon], [nEns nTs (iLat + latN-1) (iLon + lonN-1)]);
@@ -249,39 +229,6 @@ for i = fullD1:length(da_inds)-1
     Ptot    = [Ptot; nansum(pcpWin)];              % daily totals
     DT      = [DT; datenum([y m d 12 0 0])];    % forecast day
 end
-
-%     function [P, T] = gefs_member_get(date, Run, iLon, iLat, latN, lonN)
-%         
-%         nEns = 31;              % GEFS v12.0 -> 31 members 
-%         nTs  = 65;              % 65 timesteps (6h/ea)
-%         % pre-allocation for P and T arrays
-%         P    = nan(latN, lonN, 65, nEns);
-%         T    = P;
-%         
-%         for j = 1:nEns
-%             dStr = ['Getting GEFS v12.0 Ensemble Member #: ' num2str(j)];
-%             disp(dStr);
-%             if j == 1           % control Run
-%                 iPath = ['http://nomads.ncep.noaa.gov/dods/gefs/gefs' ...   
-%                     date '/gec00_' Run 'z_pgrb2a'];  
-%             else  
-%                 iPath = ['http://nomads.ncep.noaa.gov/dods/gefs/gefs' ...
-%                     date '/gep' dPad(num2str(j-1),2) '_' Run 'z_pgrb2a'];     
-%             end
-%             
-%             Tmp = ncread(iPath, 'tmp2m', [iLon iLat 1 1], [latN lonN nTs 1]);
-%             Tmp = (Tmp-273.15).*9./5+32;
-%             Tmp = permute(Tmp, [2,1,3]);        % permute to row(lat) x column(lon)
-%             
-%             Pp  = ncread(iPath, 'apcpsfc', [iLon iLat 1 1], [latN lonN nTs 1]);
-%             Pp  = Pp./25.4;                     % convert kgm^-2 to in.
-%             Pp  = permute(Pp, [2,1,3]);         % same permutation as above
-%             
-%             T(:,:,:,j) = Tmp;                   % add as 4th (ens) dimension to hypercube
-%             P(:,:,:,j) = Pp;                    % same, for precip 
-%             
-%         end
-%     end
 
 end
 %%% End of Function
