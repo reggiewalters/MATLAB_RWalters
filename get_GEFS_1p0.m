@@ -1,3 +1,4 @@
+/// deprecated ///
 % This function will retrieve Global Ensemble Forecast System (GEFS)
 % 1.0 deg precipitation & temperature forecasts from the current day,
 % cycling out 15 days, including the current date.
