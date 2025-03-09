@@ -47,7 +47,7 @@
 % Valley Met (CVM) weather station 
 %
 %
-function [Tmax,Tmin,Ptot,DT, T_air, Precip, time] = get_GFS_025(T_Lat, T_Lon, varargin)
+function [Tmax, Tmin, Ptot, DT, T_air, Precip, time] = get_GFS_025(T_Lat, T_Lon, varargin)
 
 % set time offset, dependent upon timezone/DST
 timeZone = 'America/Los_Angeles';
